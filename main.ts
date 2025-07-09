@@ -4,12 +4,14 @@ interface AzureDevOpsSettings {
     organization: string;
     project: string;
     personalAccessToken: string;
+    useMarkdownInAzureDevOps: boolean;
 }
 
 const DEFAULT_SETTINGS: AzureDevOpsSettings = {
     organization: '',
     project: '',
-    personalAccessToken: ''
+    personalAccessToken: '',
+    useMarkdownInAzureDevOps: false
 };
 
 interface WorkItem {
@@ -17,8 +19,6 @@ interface WorkItem {
     description: string;
     workItemType: string;
 }
-
-//TODO Break out to multiple files
 
 export default class AzureDevOpsPlugin extends Plugin {
     settings: AzureDevOpsSettings;
@@ -225,7 +225,8 @@ export default class AzureDevOpsPlugin extends Plugin {
             return null;
         }
 
-        const url = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_apis/wit/workitems/${workItemId}?api-version=7.0`;
+        // Request both fields and field formats
+        const url = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_apis/wit/workitems/${workItemId}?$expand=all&api-version=7.0`;
 
         try {
             const response = await requestUrl({
@@ -352,8 +353,8 @@ export default class AzureDevOpsPlugin extends Plugin {
 
             console.log(`Found ${workItemIds.length} work items, fetching details...`);
 
-            // Step 2: Get detailed work item data
-            const detailsUrl = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_apis/wit/workitems?ids=${workItemIds.join(',')}&api-version=7.0`;
+            // Step 2: Get detailed work item data with formats
+            const detailsUrl = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_apis/wit/workitems?ids=${workItemIds.join(',')}&$expand=all&api-version=7.0`;
 
             const detailsResponse = await requestUrl({
                 url: detailsUrl,
@@ -445,7 +446,24 @@ export default class AzureDevOpsPlugin extends Plugin {
         const assignedTo = fields['System.AssignedTo']?.displayName || 'Unassigned';
         const createdDate = fields['System.CreatedDate'] ? new Date(fields['System.CreatedDate']).toLocaleDateString() : 'Unknown';
         const changedDate = fields['System.ChangedDate'] ? new Date(fields['System.ChangedDate']).toLocaleDateString() : 'Unknown';
-        const description = this.htmlToMarkdown(fields['System.Description'] || 'No description provided');
+        
+        // Handle description based on the actual format from Azure DevOps
+        let description = 'No description provided';
+        if (fields['System.Description']) {
+            // Check if Azure DevOps indicates this field is in Markdown format
+            const isMarkdownFormat = workItem.fieldFormats && 
+                                   workItem.fieldFormats['System.Description'] && 
+                                   workItem.fieldFormats['System.Description'].format === 'Markdown';
+            
+            if (isMarkdownFormat) {
+                // Content is already in Markdown format
+                description = fields['System.Description'];
+            } else {
+                // Content is in HTML format, convert to Markdown
+                description = this.htmlToMarkdown(fields['System.Description']);
+            }
+        }
+        
         const tags = fields['System.Tags'] || '';
         const priority = fields['Microsoft.VSTS.Common.Priority'] || '';
         const areaPath = fields['System.AreaPath'] || '';
@@ -608,8 +626,16 @@ ${description}
         const descriptionMatch = content.match(/## Description\n\n([\s\S]*?)(?=\n## |$)/);
         if (descriptionMatch) {
             const markdownDescription = descriptionMatch[1].trim();
-            // Convert markdown to HTML for Azure DevOps
-            updates.description = this.markdownToHtml(markdownDescription);
+            
+            if (this.settings.useMarkdownInAzureDevOps) {
+                // Use native Markdown - no conversion needed
+                updates.description = markdownDescription;
+                updates.descriptionFormat = 'Markdown';
+            } else {
+                // Convert markdown to HTML for Azure DevOps
+                updates.description = this.markdownToHtml(markdownDescription);
+                updates.descriptionFormat = 'HTML';
+            }
         }
 
         return updates;
@@ -641,6 +667,15 @@ ${description}
                 path: '/fields/System.Description',
                 value: updates.description
             });
+
+            // Set the format for the description field if using Markdown
+            if (updates.descriptionFormat === 'Markdown') {
+                requestBody.push({
+                    op: 'add',
+                    path: '/multilineFieldsFormat/System.Description',
+                    value: 'Markdown'
+                });
+            }
         }
 
         if (updates.state) {
@@ -1004,6 +1039,16 @@ class AzureDevOpsSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.personalAccessToken)
                 .onChange(async (value) => {
                     this.plugin.settings.personalAccessToken = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        new Setting(containerEl)
+            .setName('Use Markdown in Azure DevOps')
+            .setDesc('Enable native Markdown support in Azure DevOps (recommended for new work items). Note: Once enabled for a work item, it cannot be reverted to HTML.')
+            .addToggle(toggle => toggle
+                .setValue(this.plugin.settings.useMarkdownInAzureDevOps)
+                .onChange(async (value) => {
+                    this.plugin.settings.useMarkdownInAzureDevOps = value;
                     await this.plugin.saveSettings();
                 }));
     }
