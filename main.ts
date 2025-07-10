@@ -90,7 +90,8 @@ export default class AzureDevOpsPlugin extends Plugin {
 
         // Build URL - Azure DevOps API requires format: /workitems/$WorkItemType
         const workItemTypeEncoded = encodeURIComponent(workItem.workItemType);
-        const url = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_apis/wit/workitems/$${workItemTypeEncoded}?api-version=7.0`;
+        const projectEncoded = encodeURIComponent(this.settings.project);
+        const url = `https://dev.azure.com/${this.settings.organization}/${projectEncoded}/_apis/wit/workitems/$${workItemTypeEncoded}?api-version=7.0`;
         
         console.log('Request URL:', url);
         console.log('URL contains $:', url.includes('$'));
@@ -322,7 +323,7 @@ export default class AzureDevOpsPlugin extends Plugin {
                       WHERE [System.TeamProject] = '${this.settings.project}' 
                       ORDER BY [System.ChangedDate] DESC`;
 
-        const queryUrl = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_apis/wit/wiql?api-version=7.0`;
+        const queryUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/wiql?api-version=7.0`;
 
         try {
             // Step 1: Query for work item IDs
@@ -353,27 +354,43 @@ export default class AzureDevOpsPlugin extends Plugin {
 
             console.log(`Found ${workItemIds.length} work items, fetching details...`);
 
-            // Step 2: Get detailed work item data with formats
-            const detailsUrl = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_apis/wit/workitems?ids=${workItemIds.join(',')}&$expand=all&api-version=7.0`;
+            // Batch the work item IDs to avoid URL length limits and API limits
+            const batchSize = 100; // Azure DevOps recommends max 200, but let's be conservative
+            const allWorkItems = [];
 
-            const detailsResponse = await requestUrl({
-                url: detailsUrl,
-                method: 'GET',
-                headers: {
-                    'Authorization': `Basic ${btoa(':' + this.settings.personalAccessToken)}`
-                },
-                throw: false
-            });
+            for (let i = 0; i < workItemIds.length; i += batchSize) {
+                const batch = workItemIds.slice(i, i + batchSize);
+                console.log(`Fetching batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(workItemIds.length / batchSize)}, IDs: ${batch.length}`);
 
-            if (detailsResponse.status < 200 || detailsResponse.status >= 300) {
-                console.error('Details fetch failed:', detailsResponse.status, detailsResponse.text);
-                new Notice(`Failed to fetch work item details: ${detailsResponse.status}`);
-                return [];
+                const detailsUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/workitems?ids=${batch.join(',')}&$expand=all&api-version=7.0`;
+
+                console.log('Details URL:', detailsUrl);
+
+                const detailsResponse = await requestUrl({
+                    url: detailsUrl,
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Basic ${btoa(':' + this.settings.personalAccessToken)}`
+                    },
+                    throw: false
+                });
+
+                console.log(`Batch ${Math.floor(i / batchSize) + 1} response status:`, detailsResponse.status);
+
+                if (detailsResponse.status < 200 || detailsResponse.status >= 300) {
+                    console.error(`Batch ${Math.floor(i / batchSize) + 1} response:`, detailsResponse.text);
+                    new Notice(`Failed to fetch work item details for batch ${Math.floor(i / batchSize) + 1}: ${detailsResponse.status}`);
+                    continue; // Skip this batch but continue with others
+                }
+
+                const batchResult = detailsResponse.json;
+                if (batchResult.value && Array.isArray(batchResult.value)) {
+                    allWorkItems.push(...batchResult.value);
+                }
             }
 
-            const detailsResult = detailsResponse.json;
-            console.log(`Successfully fetched ${detailsResult.value.length} work items`);
-            return detailsResult.value;
+            console.log(`Successfully fetched ${allWorkItems.length} work items total`);
+            return allWorkItems;
 
         } catch (error) {
             console.error('Error fetching work items:', error);
@@ -470,7 +487,7 @@ export default class AzureDevOpsPlugin extends Plugin {
         const iterationPath = fields['System.IterationPath'] || '';
 
         // Create Azure DevOps URL
-        const azureUrl = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_workitems/edit/${id}`;
+        const azureUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${id}`;
 
         const content = `---
 id: ${id}
@@ -648,7 +665,7 @@ ${description}
             return false;
         }
 
-        const url = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_apis/wit/workitems/${workItemId}?api-version=7.0`;
+        const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/workitems/${workItemId}?api-version=7.0`;
         
         const requestBody = [];
 
