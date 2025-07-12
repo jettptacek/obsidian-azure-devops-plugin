@@ -12,10 +12,18 @@ interface WorkItemUpdate {
     tags?: string;
 }
 
+interface RelatedWorkItem {
+    id: number;
+    title: string;
+    type: string;
+}
+
 export class WorkItemManager {
     app: App;
     api: AzureDevOpsAPI;
     settings: AzureDevOpsSettings;
+    // Cache for related work item details to avoid repeated API calls
+    private relatedItemsCache = new Map<number, RelatedWorkItem>();
 
     constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings) {
         this.app = app;
@@ -54,7 +62,7 @@ export class WorkItemManager {
                 const fullPath = `${folderPath}/${filename}`;
 
                 // Create note content
-                const content = this.createWorkItemNote(workItem);
+                const content = await this.createWorkItemNote(workItem);
 
                 // Check if file already exists
                 if (await this.app.vault.adapter.exists(fullPath)) {
@@ -156,7 +164,7 @@ export class WorkItemManager {
             }
 
             // Update the note with fresh data from Azure DevOps
-            const updatedContent = this.createWorkItemNote(workItem);
+            const updatedContent = await this.createWorkItemNote(workItem);
             await this.app.vault.modify(file, updatedContent);
             
             new Notice(`Work item ${workItemId} pulled successfully`);
@@ -178,8 +186,43 @@ export class WorkItemManager {
         return await this.pushSpecificWorkItem(activeFile);
     }
 
+    // Fetch related work item details and cache them
+    private async getRelatedWorkItemDetails(relatedId: number): Promise<RelatedWorkItem> {
+        // Check cache first
+        if (this.relatedItemsCache.has(relatedId)) {
+            return this.relatedItemsCache.get(relatedId)!;
+        }
+
+        try {
+            // Fetch from API
+            const workItem = await this.api.getSpecificWorkItem(relatedId);
+            if (workItem && workItem.fields) {
+                const relatedItem: RelatedWorkItem = {
+                    id: relatedId,
+                    title: workItem.fields['System.Title'] || `Work Item ${relatedId}`,
+                    type: workItem.fields['System.WorkItemType'] || 'Unknown'
+                };
+                
+                // Cache the result
+                this.relatedItemsCache.set(relatedId, relatedItem);
+                return relatedItem;
+            }
+        } catch (error) {
+            console.error(`Failed to fetch related work item ${relatedId}:`, error);
+        }
+
+        // Fallback if API call fails
+        const fallback: RelatedWorkItem = {
+            id: relatedId,
+            title: `Work Item ${relatedId}`,
+            type: 'Unknown'
+        };
+        this.relatedItemsCache.set(relatedId, fallback);
+        return fallback;
+    }
+
     // Create markdown content for a work item
-    createWorkItemNote(workItem: any): string {
+    async createWorkItemNote(workItem: any): Promise<string> {
         const fields = workItem.fields;
         const id = workItem.id;
         
@@ -213,29 +256,89 @@ export class WorkItemManager {
         const areaPath = fields['System.AreaPath'] || '';
         const iterationPath = fields['System.IterationPath'] || '';
 
-        // Process relationships to create parent/child links
+        // Process relationships to create all types of links
         const relations = workItem.relations || [];
         const parentLinks: string[] = [];
         const childLinks: string[] = [];
+        const relatedLinks: string[] = [];
+        const duplicateLinks: string[] = [];
+        const dependencyLinks: string[] = [];
+        const externalLinks: string[] = [];
 
+        // Collect all related work item IDs first
+        const relatedIds = new Set<number>();
         for (const relation of relations) {
             const relatedIdMatch = relation.url.match(/\/(\d+)$/);
-            if (!relatedIdMatch) continue;
+            if (relatedIdMatch) {
+                relatedIds.add(parseInt(relatedIdMatch[1]));
+            }
+        }
+
+        // Batch fetch related work item details
+        const relatedItemPromises = Array.from(relatedIds).map(id => 
+            this.getRelatedWorkItemDetails(id)
+        );
+        await Promise.all(relatedItemPromises);
+
+        // Process all relationships
+        for (const relation of relations) {
+            const comment = relation.attributes?.comment || '';
             
-            const relatedId = parseInt(relatedIdMatch[1]);
-            
-            if (relation.rel === 'System.LinkTypes.Hierarchy-Reverse') {
-                // This is a parent relationship
-                const parentTitle = this.getRelatedWorkItemTitle(relation, relatedId);
-                const parentNotePath = `[[WI-${relatedId} ${parentTitle}]]`;
-                const parentAzureUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${relatedId}`;
-                parentLinks.push(`- **Parent:** ${parentNotePath} | [View in Azure DevOps](${parentAzureUrl})`);
-            } else if (relation.rel === 'System.LinkTypes.Hierarchy-Forward') {
-                // This is a child relationship
-                const childTitle = this.getRelatedWorkItemTitle(relation, relatedId);
-                const childNotePath = `[[WI-${relatedId} ${childTitle}]]`;
-                const childAzureUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${relatedId}`;
-                childLinks.push(`- **Child:** ${childNotePath} | [View in Azure DevOps](${childAzureUrl})`);
+            // Handle work item relationships
+            const relatedIdMatch = relation.url.match(/\/(\d+)$/);
+            if (relatedIdMatch) {
+                const relatedId = parseInt(relatedIdMatch[1]);
+                const relatedItem = this.relatedItemsCache.get(relatedId);
+                
+                if (!relatedItem) continue;
+                
+                const sanitizedTitle = this.sanitizeFileName(relatedItem.title);
+                const noteFilename = `WI-${relatedId} ${sanitizedTitle}`;
+                const notePath = `[[${noteFilename}]]`;
+                const azureUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${relatedId}`;
+                const commentText = comment ? ` - *${comment}*` : '';
+                
+                switch (relation.rel) {
+                    case 'System.LinkTypes.Hierarchy-Reverse':
+                        parentLinks.push(`- **Parent:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                        break;
+                    case 'System.LinkTypes.Hierarchy-Forward':
+                        childLinks.push(`- **Child:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                        break;
+                    case 'System.LinkTypes.Related':
+                        relatedLinks.push(`- **Related:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                        break;
+                    case 'System.LinkTypes.Duplicate-Forward':
+                        duplicateLinks.push(`- **Duplicate of:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                        break;
+                    case 'System.LinkTypes.Duplicate-Reverse':
+                        duplicateLinks.push(`- **Duplicated by:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                        break;
+                    case 'System.LinkTypes.Dependency-Forward':
+                        dependencyLinks.push(`- **Successor:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                        break;
+                    case 'System.LinkTypes.Dependency-Reverse':
+                        dependencyLinks.push(`- **Predecessor:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                        break;
+                    default:
+                        // Handle other work item relationship types
+                        const relType = this.formatRelationType(relation.rel);
+                        relatedLinks.push(`- **${relType}:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                        break;
+                }
+            } else {
+                // Handle external links (hyperlinks, attachments, etc.)
+                const linkUrl = relation.url;
+                const linkComment = relation.attributes?.comment || 'External Link';
+                
+                if (relation.rel === 'Hyperlink') {
+                    externalLinks.push(`- **Link:** [${linkComment}](${linkUrl})`);
+                } else if (relation.rel === 'AttachedFile') {
+                    externalLinks.push(`- **Attachment:** [${linkComment}](${linkUrl})`);
+                } else {
+                    const relType = this.formatRelationType(relation.rel);
+                    externalLinks.push(`- **${relType}:** [${linkComment}](${linkUrl})`);
+                }
             }
         }
 
@@ -266,12 +369,6 @@ synced: ${new Date().toISOString()}
 **Assigned To:** ${assignedTo}  
 **Priority:** ${priority || 'Not set'}
 
-## Relationships
-
-${parentLinks.length > 0 ? '### Parents\n' + parentLinks.join('\n') + '\n' : ''}
-${childLinks.length > 0 ? '### Children\n' + childLinks.join('\n') + '\n' : ''}
-${parentLinks.length === 0 && childLinks.length === 0 ? '*No parent or child relationships*\n' : ''}
-
 ## Details
 
 **Created:** ${createdDate}  
@@ -288,6 +385,8 @@ ${description}
 
 [View in Azure DevOps](${azureUrl})
 
+${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.length > 0 ? '\n' + childLinks.join('\n') : ''}${relatedLinks.length > 0 ? '\n' + relatedLinks.join('\n') : ''}${duplicateLinks.length > 0 ? '\n' + duplicateLinks.join('\n') : ''}${dependencyLinks.length > 0 ? '\n' + dependencyLinks.join('\n') : ''}${externalLinks.length > 0 ? '\n' + externalLinks.join('\n') : ''}${parentLinks.length === 0 && childLinks.length === 0 && relatedLinks.length === 0 && duplicateLinks.length === 0 && dependencyLinks.length === 0 && externalLinks.length === 0 ? '\n\n*No additional links or relationships*' : ''}
+
 ---
 *Last pulled: ${new Date().toLocaleString()}*
 `;
@@ -295,12 +394,43 @@ ${description}
         return content;
     }
 
-    // Helper method to get related work item title
-    private getRelatedWorkItemTitle(relation: any, relatedId: number): string {
-        if (relation.attributes && relation.attributes.name) {
-            return this.sanitizeFileName(relation.attributes.name);
+    // Helper method to format relation types for display
+    private formatRelationType(relationType: string): string {
+        // Handle common Azure DevOps relation types
+        const typeMap: { [key: string]: string } = {
+            'System.LinkTypes.Related': 'Related',
+            'System.LinkTypes.Duplicate-Forward': 'Duplicate of',
+            'System.LinkTypes.Duplicate-Reverse': 'Duplicated by',
+            'System.LinkTypes.Dependency-Forward': 'Successor',
+            'System.LinkTypes.Dependency-Reverse': 'Predecessor',
+            'System.LinkTypes.Hierarchy-Forward': 'Child',
+            'System.LinkTypes.Hierarchy-Reverse': 'Parent',
+            'Microsoft.VSTS.TestCase.SharedStepReferencedBy': 'Referenced by Test Case',
+            'Microsoft.VSTS.TestCase.SharedStepReferencedBy-Reverse': 'References Shared Step',
+            'Microsoft.VSTS.Common.TestedBy': 'Tested by',
+            'Microsoft.VSTS.Common.TestedBy-Reverse': 'Tests',
+            'Hyperlink': 'Hyperlink',
+            'AttachedFile': 'Attachment'
+        };
+
+        // Return mapped type or clean up the original
+        if (typeMap[relationType]) {
+            return typeMap[relationType];
         }
-        return `Work Item ${relatedId}`;
+
+        // Clean up system types
+        return relationType
+            .replace(/^System\.LinkTypes\./, '')
+            .replace(/^Microsoft\.VSTS\./, '')
+            .replace(/-Forward$/, ' (Forward)')
+            .replace(/-Reverse$/, ' (Reverse)')
+            .replace(/([A-Z])/g, ' $1')
+            .trim();
+    }
+
+    // Clear the cache when settings are updated (in case of different project)
+    clearRelatedItemsCache() {
+        this.relatedItemsCache.clear();
     }
 
     // Extract updates from note content and frontmatter
