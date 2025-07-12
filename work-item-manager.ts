@@ -2,6 +2,16 @@ import { App, Notice, TFile } from 'obsidian';
 import { AzureDevOpsAPI } from './api';
 import { AzureDevOpsSettings } from './settings';
 
+interface WorkItemUpdate {
+    title?: string;
+    description?: string;
+    descriptionFormat?: string;
+    state?: string;
+    assignedTo?: string;
+    priority?: number;
+    tags?: string;
+}
+
 export class WorkItemManager {
     app: App;
     api: AzureDevOpsAPI;
@@ -71,80 +81,90 @@ export class WorkItemManager {
 
     // Push a specific work item file to Azure DevOps
     async pushSpecificWorkItem(file: TFile): Promise<boolean> {
-        const content = await this.app.vault.read(file);
-        
-        // Parse frontmatter to get work item ID
-        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-        if (!frontmatterMatch) {
-            new Notice('This note doesn\'t have frontmatter. Only work item notes can be pushed.');
+        try {
+            const content = await this.app.vault.read(file);
+            
+            // Parse frontmatter to get work item ID
+            const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+            if (!frontmatterMatch) {
+                new Notice('This note doesn\'t have frontmatter. Only work item notes can be pushed.');
+                return false;
+            }
+
+            const frontmatter = frontmatterMatch[1];
+            const idMatch = frontmatter.match(/id:\s*(\d+)/);
+            
+            if (!idMatch) {
+                new Notice('This note doesn\'t have a work item ID. Only pulled work items can be pushed.');
+                return false;
+            }
+
+            const workItemId = parseInt(idMatch[1]);
+
+            // Extract updated values from frontmatter and content
+            const updates = this.extractUpdatesFromNote(content, frontmatter);
+            
+            if (Object.keys(updates).length === 0) {
+                new Notice('No changes detected to push');
+                return false;
+            }
+
+            // Push updates to Azure DevOps
+            const success = await this.api.updateWorkItem(workItemId, updates);
+            
+            if (success) {
+                // Update the "Last pushed" timestamp in the note
+                await this.updateNotePushTimestamp(file, content);
+                new Notice(`Work item ${workItemId} pushed successfully`);
+            }
+            
+            return success;
+        } catch (error) {
+            new Notice(`Error pushing work item: ${error.message}`);
             return false;
         }
-
-        const frontmatter = frontmatterMatch[1];
-        const idMatch = frontmatter.match(/id:\s*(\d+)/);
-        
-        if (!idMatch) {
-            new Notice('This note doesn\'t have a work item ID. Only pulled work items can be pushed.');
-            return false;
-        }
-
-        const workItemId = parseInt(idMatch[1]);
-
-        // Extract updated values from frontmatter and content
-        const updates = this.extractUpdatesFromNote(content, frontmatter);
-        
-        if (Object.keys(updates).length === 0) {
-            new Notice('No changes detected to push');
-            return false;
-        }
-
-        // Push updates to Azure DevOps
-        const success = await this.api.updateWorkItem(workItemId, updates);
-        
-        if (success) {
-            // Update the "Last pushed" timestamp in the note
-            await this.updateNotePushTimestamp(file, content);
-            new Notice(`Work item ${workItemId} pushed successfully`);
-        }
-        
-        return success;
     }
 
     // Pull a specific work item from Azure DevOps
     async pullSpecificWorkItem(file: TFile): Promise<boolean> {
-        const content = await this.app.vault.read(file);
-        
-        // Parse frontmatter to get work item ID
-        const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-        if (!frontmatterMatch) {
-            new Notice('This note doesn\'t have frontmatter. Only work item notes can be pulled.');
+        try {
+            const content = await this.app.vault.read(file);
+            
+            // Parse frontmatter to get work item ID
+            const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+            if (!frontmatterMatch) {
+                new Notice('This note doesn\'t have frontmatter. Only work item notes can be pulled.');
+                return false;
+            }
+
+            const frontmatter = frontmatterMatch[1];
+            const idMatch = frontmatter.match(/id:\s*(\d+)/);
+            
+            if (!idMatch) {
+                new Notice('This note doesn\'t have a work item ID. Only work item notes can be pulled.');
+                return false;
+            }
+
+            const workItemId = parseInt(idMatch[1]);
+
+            // Get the specific work item from Azure DevOps
+            const workItem = await this.api.getSpecificWorkItem(workItemId);
+            
+            if (!workItem) {
+                new Notice(`Failed to fetch work item ${workItemId} from Azure DevOps`);
+                return false;
+            }
+
+            // Update the note with fresh data from Azure DevOps
+            const updatedContent = this.createWorkItemNote(workItem);
+            await this.app.vault.modify(file, updatedContent);
+            
+            new Notice(`Work item ${workItemId} pulled successfully`);
+            return true;
+        } catch (error) {
+            new Notice(`Error pulling work item: ${error.message}`);
             return false;
         }
-
-        const frontmatter = frontmatterMatch[1];
-        const idMatch = frontmatter.match(/id:\s*(\d+)/);
-        
-        if (!idMatch) {
-            new Notice('This note doesn\'t have a work item ID. Only work item notes can be pulled.');
-            return false;
-        }
-
-        const workItemId = parseInt(idMatch[1]);
-
-        // Get the specific work item from Azure DevOps
-        const workItem = await this.api.getSpecificWorkItem(workItemId);
-        
-        if (!workItem) {
-            new Notice(`Failed to fetch work item ${workItemId} from Azure DevOps`);
-            return false;
-        }
-
-        // Update the note with fresh data from Azure DevOps
-        const updatedContent = this.createWorkItemNote(workItem);
-        await this.app.vault.modify(file, updatedContent);
-        
-        new Notice(`Work item ${workItemId} pulled successfully`);
-        return true;
     }
 
     // Push current work item note to Azure DevOps
@@ -193,6 +213,32 @@ export class WorkItemManager {
         const areaPath = fields['System.AreaPath'] || '';
         const iterationPath = fields['System.IterationPath'] || '';
 
+        // Process relationships to create parent/child links
+        const relations = workItem.relations || [];
+        const parentLinks: string[] = [];
+        const childLinks: string[] = [];
+
+        for (const relation of relations) {
+            const relatedIdMatch = relation.url.match(/\/(\d+)$/);
+            if (!relatedIdMatch) continue;
+            
+            const relatedId = parseInt(relatedIdMatch[1]);
+            
+            if (relation.rel === 'System.LinkTypes.Hierarchy-Reverse') {
+                // This is a parent relationship
+                const parentTitle = this.getRelatedWorkItemTitle(relation, relatedId);
+                const parentNotePath = `[[WI-${relatedId} ${parentTitle}]]`;
+                const parentAzureUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${relatedId}`;
+                parentLinks.push(`- **Parent:** ${parentNotePath} | [View in Azure DevOps](${parentAzureUrl})`);
+            } else if (relation.rel === 'System.LinkTypes.Hierarchy-Forward') {
+                // This is a child relationship
+                const childTitle = this.getRelatedWorkItemTitle(relation, relatedId);
+                const childNotePath = `[[WI-${relatedId} ${childTitle}]]`;
+                const childAzureUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${relatedId}`;
+                childLinks.push(`- **Child:** ${childNotePath} | [View in Azure DevOps](${childAzureUrl})`);
+            }
+        }
+
         // Create Azure DevOps URL
         const azureUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${id}`;
 
@@ -220,6 +266,12 @@ synced: ${new Date().toISOString()}
 **Assigned To:** ${assignedTo}  
 **Priority:** ${priority || 'Not set'}
 
+## Relationships
+
+${parentLinks.length > 0 ? '### Parents\n' + parentLinks.join('\n') + '\n' : ''}
+${childLinks.length > 0 ? '### Children\n' + childLinks.join('\n') + '\n' : ''}
+${parentLinks.length === 0 && childLinks.length === 0 ? '*No parent or child relationships*\n' : ''}
+
 ## Details
 
 **Created:** ${createdDate}  
@@ -243,19 +295,29 @@ ${description}
         return content;
     }
 
-    // Extract updates from note content and frontmatter
-    extractUpdatesFromNote(content: string, frontmatter: string): any {
-        const updates: any = {};
+    // Helper method to get related work item title
+    private getRelatedWorkItemTitle(relation: any, relatedId: number): string {
+        if (relation.attributes && relation.attributes.name) {
+            return this.sanitizeFileName(relation.attributes.name);
+        }
+        return `Work Item ${relatedId}`;
+    }
 
-        // Split frontmatter into lines and parse each one
-        const lines = frontmatter.split('\n');
+    // Extract updates from note content and frontmatter
+    extractUpdatesFromNote(content: string, frontmatter: string): WorkItemUpdate {
+        const updates: WorkItemUpdate = {};
+
+        // Parse frontmatter into key-value pairs
         const frontmatterData: { [key: string]: string } = {};
+        const lines = frontmatter.split('\n');
         
         for (const line of lines) {
             const colonIndex = line.indexOf(':');
             if (colonIndex > 0) {
                 const key = line.substring(0, colonIndex).trim();
-                const value = line.substring(colonIndex + 1).trim();
+                let value = line.substring(colonIndex + 1).trim();
+                // Remove quotes if present
+                value = value.replace(/^["']|["']$/g, '');
                 frontmatterData[key] = value;
             }
         }
@@ -263,7 +325,10 @@ ${description}
         // Extract title from markdown header
         const titleMatch = content.match(/^# (.+)$/m);
         if (titleMatch) {
-            updates.title = titleMatch[1].trim();
+            const newTitle = titleMatch[1].trim();
+            if (newTitle !== frontmatterData.title?.replace(/^["']|["']$/g, '')) {
+                updates.title = newTitle;
+            }
         }
 
         // Extract values from parsed frontmatter
@@ -283,7 +348,7 @@ ${description}
         }
 
         if (frontmatterData.tags !== undefined) {
-            let tagValue = frontmatterData.tags.replace(/^["']|["']$/g, ''); // Remove quotes
+            let tagValue = frontmatterData.tags;
             if (tagValue && tagValue !== 'None') {
                 updates.tags = tagValue;
             } else {
@@ -292,7 +357,7 @@ ${description}
         }
 
         // Extract description from Description section
-        const descriptionMatch = content.match(/## Description\n\n([\s\S]*?)(?=\n## |$)/);
+        const descriptionMatch = content.match(/## Description\n\n([\s\S]*?)(?=\n## |---\n\*Last|$)/);
         if (descriptionMatch) {
             const markdownDescription = descriptionMatch[1].trim();
             
@@ -334,6 +399,8 @@ ${description}
 
     // Sanitize filename for file system
     sanitizeFileName(title: string): string {
+        if (!title) return 'Untitled';
+        
         // Remove or replace invalid characters
         return title
             .replace(/[<>:"/\\|?*]/g, '-')  // Replace invalid chars with dash
@@ -344,74 +411,40 @@ ${description}
 
     // Convert Markdown to HTML for Azure DevOps
     markdownToHtml(markdown: string): string {
-        const result = markdown
-            // Tables (must be processed before other formatting)
-            .replace(/\|(.+)\|\n\|[-:\s\|]+\|\n((?:\|.+\|\n?)*)/g, (match, header, rows) => {
-                const headerCells = header.split('|').map((cell: string) => cell.trim()).filter((cell: string) => cell);
-                const headerHtml = headerCells.map((cell: string) => `<th style="border: 2px solid #666; padding: 12px 16px; background-color: #f2f2f2; font-weight: bold;">${cell}</th>`).join('');
-                
-                const rowsHtml = rows.trim().split('\n').map((row: string) => {
-                    const cells = row.split('|').map((cell: string) => cell.trim()).filter((cell: string) => cell);
-                    return `<tr>${cells.map((cell: string) => `<td style="border: 2px solid #666; padding: 12px 16px;">${cell}</td>`).join('')}</tr>`;
-                }).join('');
-                
-                return `<table style="border-collapse: collapse; border: 2px solid #666; width: 100%; margin: 10px 0;"><thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
-            })
-            
-            // Code blocks (preserve before other processing)
-            .replace(/```([\s\S]*?)```/g, (match, code) => {
-                return `<pre><code>${code.trim()}</code></pre>`;
-            })
-            
+        if (!markdown) return '';
+        
+        return markdown
             // Headers
             .replace(/^### (.*$)/gm, '<h3>$1</h3>')
             .replace(/^## (.*$)/gm, '<h2>$1</h2>')
             .replace(/^# (.*$)/gm, '<h1>$1</h1>')
-            
-            // Horizontal rules - only underscores (___)
-            .replace(/^_{3,}\s*$/gm, '<hr style="border: none; border-top: 2px solid #ccc; margin: 20px 0;">')
             
             // Bold and italic
             .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\*(.*?)\*/g, '<em>$1</em>')
             
-            // Inline code
+            // Code blocks
+            .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
             .replace(/`(.*?)`/g, '<code>$1</code>')
             
             // Links
             .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
             
-            // Unordered lists
+            // Lists
             .replace(/^\* (.*)$/gm, '<li>$1</li>')
             .replace(/(<li>.*<\/li>)/g, '<ul>$1</ul>')
-            
-            // Ordered lists
             .replace(/^\d+\. (.*)$/gm, '<li>$1</li>')
-            .replace(/(<li>.*<\/li>)/g, (match) => {
-                if (!match.includes('<ul>')) {
-                    return `<ol>${match}</ol>`;
-                }
-                return match;
-            })
             
-            // Split content into paragraphs based on double line breaks
-            .split(/\n\s*\n/)
-            .filter(para => para.trim().length > 0)
-            .map(para => {
-                // Don't wrap block elements in paragraphs
-                if (para.match(/^<(h[1-6]|ul|ol|table|pre|hr)/)) {
-                    return para;
-                }
-                // Replace single line breaks within paragraphs with <br>
-                return `<p>${para.replace(/\n/g, '<br>')}</p>`;
-            })
-            .join('')
+            // Line breaks
+            .replace(/\n\n/g, '</p><p>')
+            .replace(/^(.*)$/gm, '<p>$1</p>')
             
-            // Final cleanup
+            // Clean up
+            .replace(/<p><\/p>/g, '')
+            .replace(/<p>(<[hl])/g, '$1')
+            .replace(/(<\/[hl][^>]*>)<\/p>/g, '$1')
             .trim();
-            
-        return result;
     }
 
     // Convert HTML to Markdown when pulling from Azure DevOps
@@ -419,30 +452,7 @@ ${description}
         if (!html) return '';
         
         return html
-            // Tables (process before other conversions)
-            .replace(/<table[^>]*>([\s\S]*?)<\/table>/gi, (match, content) => {
-                // Extract header
-                const headerMatch = content.match(/<thead[^>]*>([\s\S]*?)<\/thead>/i);
-                let headerMarkdown = '';
-                if (headerMatch) {
-                    const headerCells = headerMatch[1].match(/<th[^>]*>(.*?)<\/th>/gi) || [];
-                    const headers = headerCells.map((cell: string) => cell.replace(/<th[^>]*>(.*?)<\/th>/i, '$1').trim());
-                    headerMarkdown = `| ${headers.join(' | ')} |\n| ${headers.map(() => '---').join(' | ')} |\n`;
-                }
-                
-                // Extract body rows
-                const bodyMatch = content.match(/<tbody[^>]*>([\s\S]*?)<\/tbody>/i) || [null, content];
-                const rowMatches = bodyMatch[1].match(/<tr[^>]*>([\s\S]*?)<\/tr>/gi) || [];
-                const bodyMarkdown = rowMatches.map((row: string) => {
-                    const cellMatches = row.match(/<td[^>]*>(.*?)<\/td>/gi) || [];
-                    const cells = cellMatches.map((cell: string) => cell.replace(/<td[^>]*>(.*?)<\/td>/i, '$1').trim());
-                    return `| ${cells.join(' | ')} |`;
-                }).join('\n');
-                
-                return `\n\n${headerMarkdown}${bodyMarkdown}\n\n`;
-            })
-            
-            // Headers (no extra spacing - let natural spacing be preserved)
+            // Headers
             .replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1')
             .replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1')
             .replace(/<h3[^>]*>(.*?)<\/h3>/gi, '### $1')
@@ -450,19 +460,14 @@ ${description}
             .replace(/<h5[^>]*>(.*?)<\/h5>/gi, '##### $1')
             .replace(/<h6[^>]*>(.*?)<\/h6>/gi, '###### $1')
             
-            // Horizontal rules
-            .replace(/<hr[^>]*>/gi, '___')
-            
-            // Code blocks
-            .replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, '```\n$1\n```')
-            
             // Bold and italic
             .replace(/<strong[^>]*>(.*?)<\/strong>/gi, '**$1**')
             .replace(/<b[^>]*>(.*?)<\/b>/gi, '**$1**')
             .replace(/<em[^>]*>(.*?)<\/em>/gi, '*$1*')
             .replace(/<i[^>]*>(.*?)<\/i>/gi, '*$1*')
             
-            // Inline code
+            // Code
+            .replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, '```\n$1\n```')
             .replace(/<code[^>]*>(.*?)<\/code>/gi, '`$1`')
             
             // Links
@@ -470,17 +475,15 @@ ${description}
             
             // Lists
             .replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (match, content) => {
-                return content.replace(/<li[^>]*>(.*?)<\/li>/gi, '* $1');
+                return content.replace(/<li[^>]*>(.*?)<\/li>/gi, '* $1\n');
             })
             .replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (match, content) => {
                 let counter = 1;
-                return content.replace(/<li[^>]*>(.*?)<\/li>/gi, () => `${counter++}. $1`);
+                return content.replace(/<li[^>]*>(.*?)<\/li>/gi, () => `${counter++}. $1\n`);
             })
             
-            // Convert br tags to single line breaks
+            // Line breaks
             .replace(/<br\s*\/?>/gi, '\n')
-            
-            // Convert paragraphs - preserve the structure that was there
             .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
             .replace(/<p[^>]*>/gi, '')
             .replace(/<\/p>/gi, '')
@@ -488,8 +491,8 @@ ${description}
             // Remove remaining HTML tags
             .replace(/<[^>]*>/gi, '')
             
-            // Clean up whitespace more conservatively
-            .replace(/\n{3,}/g, '\n\n')  // Only reduce 3+ consecutive newlines to 2
+            // Clean up whitespace
+            .replace(/\n{3,}/g, '\n\n')
             .trim();
     }
 }

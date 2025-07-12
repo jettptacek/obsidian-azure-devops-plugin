@@ -6,10 +6,34 @@ export const VIEW_TYPE_AZURE_DEVOPS_TREE = 'azure-devops-tree-view';
 export class AzureDevOpsTreeView extends ItemView {
     plugin: any;
     workItemsTree: WorkItemNode[] = [];
+    draggedNode: WorkItemNode | null = null;
+    allNodes: Map<number, WorkItemNode> = new Map();
+    workItemTypeIcons: Map<string, string> = new Map(); // Cache for work item type icons
+    iconLoadPromises: Map<string, Promise<string | null>> = new Map(); // Prevent duplicate downloads
 
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
         this.plugin = plugin;
+    }
+
+    // Helper method for image error handling
+    addImageErrorHandling(iconImg: HTMLImageElement, iconContainer: HTMLElement, workItemType: string) {
+        iconImg.addEventListener('error', () => {
+            console.log(`Failed to display icon for ${workItemType}, falling back to emoji`);
+            // Replace with emoji fallback
+            iconContainer.empty();
+            const emojiIcons: { [key: string]: string } = {
+                'Epic': '🎯', 'Feature': '🚀', 'User Story': '📝', 'Task': '✅', 
+                'Bug': '🐛', 'Issue': '⚠️', 'Test Case': '🧪', 'Requirement': '📋'
+            };
+            iconContainer.textContent = emojiIcons[workItemType] || '📋';
+            iconContainer.style.fontSize = '14px';
+            iconContainer.title = workItemType;
+        });
+        
+        iconImg.addEventListener('load', () => {
+            console.log(`Successfully displayed icon for ${workItemType}`);
+        });
     }
 
     getViewType(): string {
@@ -27,7 +51,7 @@ export class AzureDevOpsTreeView extends ItemView {
     async onOpen() {
         this.containerEl.empty();
         
-        // Simple header
+        // Header
         const header = this.containerEl.createDiv();
         header.style.padding = '10px';
         header.style.borderBottom = '1px solid var(--background-modifier-border)';
@@ -39,22 +63,43 @@ export class AzureDevOpsTreeView extends ItemView {
         title.textContent = 'Azure DevOps Work Items';
         title.style.margin = '0';
         
-        const refreshBtn = header.createEl('button');
+        const buttonContainer = header.createDiv();
+        buttonContainer.style.display = 'flex';
+        buttonContainer.style.gap = '8px';
+        
+        const refreshBtn = buttonContainer.createEl('button');
         refreshBtn.textContent = 'Refresh';
         refreshBtn.className = 'mod-cta';
         refreshBtn.addEventListener('click', () => this.refreshTreeView());
 
-        // Simple tree container
+        const pushRelationsBtn = buttonContainer.createEl('button');
+        pushRelationsBtn.textContent = 'Push Relations';
+        pushRelationsBtn.className = 'mod-warning';
+        pushRelationsBtn.addEventListener('click', () => this.pushAllRelationshipChanges());
+
+        // Instructions
+        const instructions = this.containerEl.createDiv();
+        instructions.style.padding = '8px 10px';
+        instructions.style.backgroundColor = 'var(--background-secondary)';
+        instructions.style.fontSize = '12px';
+        instructions.style.color = 'var(--text-muted)';
+        instructions.innerHTML = '💡 <strong>Drag & Drop:</strong> Drag work items to change parent-child relationships. Click "Push Relations" to sync changes to Azure DevOps.';
+
+        // Tree container
         const treeContainer = this.containerEl.createDiv();
         treeContainer.style.padding = '10px';
         treeContainer.style.overflowY = 'auto';
-        treeContainer.style.maxHeight = 'calc(100vh - 100px)';
+        treeContainer.style.maxHeight = 'calc(100vh - 140px)';
         
         await this.buildTreeView(treeContainer);
     }
 
     async refreshTreeView() {
-        const treeContainer = this.containerEl.children[1] as HTMLElement;
+        // Clear icon cache to force reload
+        this.workItemTypeIcons.clear();
+        this.iconLoadPromises.clear();
+        
+        const treeContainer = this.containerEl.children[2] as HTMLElement;
         if (treeContainer) {
             treeContainer.empty();
             await this.buildTreeView(treeContainer);
@@ -63,6 +108,9 @@ export class AzureDevOpsTreeView extends ItemView {
 
     async buildTreeView(container: HTMLElement) {
         try {
+            // Load work item type icons first
+            await this.loadWorkItemTypeIcons();
+            
             const workItems = await this.plugin.getWorkItemsWithRelations();
             
             if (workItems.length === 0) {
@@ -103,6 +151,9 @@ export class AzureDevOpsTreeView extends ItemView {
             };
             nodeMap.set(workItem.id, node);
         }
+
+        // Store all nodes for relationship management
+        this.allNodes = nodeMap;
 
         // Build relationships
         for (const workItem of workItems) {
@@ -165,16 +216,61 @@ export class AzureDevOpsTreeView extends ItemView {
             row.style.alignItems = 'center';
             row.style.padding = '4px 0';
             row.style.marginLeft = `${level * 20}px`;
-            row.style.minHeight = '28px';
+            row.style.minHeight = '32px';
             row.style.borderRadius = '4px';
-            row.style.cursor = 'default';
+            row.style.cursor = 'grab';
+            row.style.position = 'relative';
+            row.draggable = true;
             
+            // Store node reference on element
+            (row as any).workItemNode = node;
+
+            // Drag and drop handlers
+            row.addEventListener('dragstart', (e) => {
+                this.draggedNode = node;
+                row.style.opacity = '0.5';
+                e.dataTransfer!.effectAllowed = 'move';
+                e.dataTransfer!.setData('text/plain', node.id.toString());
+            });
+
+            row.addEventListener('dragend', () => {
+                row.style.opacity = '1';
+                this.draggedNode = null;
+                this.removeAllDropIndicators();
+            });
+
+            row.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer!.dropEffect = 'move';
+                
+                if (this.draggedNode && this.draggedNode.id !== node.id && !this.isDescendant(this.draggedNode, node)) {
+                    this.showDropIndicator(row, true);
+                }
+            });
+
+            row.addEventListener('dragleave', () => {
+                this.showDropIndicator(row, false);
+            });
+
+            row.addEventListener('drop', (e) => {
+                e.preventDefault();
+                this.showDropIndicator(row, false);
+                
+                if (this.draggedNode && this.draggedNode.id !== node.id && !this.isDescendant(this.draggedNode, node)) {
+                    this.changeParentChild(this.draggedNode, node);
+                }
+            });
+
             // Hover effect
             row.addEventListener('mouseenter', () => {
-                row.style.backgroundColor = 'var(--background-modifier-hover)';
+                if (!this.draggedNode) {
+                    row.style.backgroundColor = 'var(--background-modifier-hover)';
+                }
             });
             row.addEventListener('mouseleave', () => {
-                row.style.backgroundColor = '';
+                if (!this.draggedNode) {
+                    row.style.backgroundColor = '';
+                }
             });
 
             // Expand/collapse button
@@ -198,12 +294,86 @@ export class AzureDevOpsTreeView extends ItemView {
                 expandBtn.style.opacity = '0.5';
             }
 
-            // Work item title - This is the main part that was getting cut off
+            // Drag handle
+            const dragHandle = row.createEl('span');
+            dragHandle.textContent = '⋮⋮';
+            dragHandle.style.fontSize = '14px';
+            dragHandle.style.color = 'var(--text-muted)';
+            dragHandle.style.marginRight = '8px';
+            dragHandle.style.cursor = 'grab';
+            dragHandle.style.flexShrink = '0';
+
+            // Work item type icon (real Azure DevOps icon or emoji fallback)
+            const iconContainer = row.createEl('span');
+            iconContainer.style.width = '20px';
+            iconContainer.style.height = '20px';
+            iconContainer.style.display = 'flex';
+            iconContainer.style.alignItems = 'center';
+            iconContainer.style.justifyContent = 'center';
+            iconContainer.style.marginRight = '8px';
+            iconContainer.style.flexShrink = '0';
+
+            const iconInfo = this.getWorkItemTypeIcon(node.type);
+            if (iconInfo.type === 'image') {
+                // Use real Azure DevOps icon
+                if (iconInfo.value.startsWith('data:image/svg+xml')) {
+                    // Handle SVG icons differently
+                    iconContainer.innerHTML = '';
+                    const svgData = iconInfo.value.split(',')[1];
+                    const svgContent = decodeURIComponent(svgData);
+                    
+                    try {
+                        // Create SVG element directly
+                        const parser = new DOMParser();
+                        const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+                        const svgElement = svgDoc.documentElement;
+                        
+                        if (svgElement && svgElement.tagName === 'svg') {
+                            // Set SVG attributes for proper display
+                            svgElement.setAttribute('width', '16');
+                            svgElement.setAttribute('height', '16');
+                            svgElement.style.width = '16px';
+                            svgElement.style.height = '16px';
+                            
+                            iconContainer.appendChild(svgElement);
+                        } else {
+                            throw new Error('Invalid SVG content');
+                        }
+                    } catch (error) {
+                        // Fallback to img element
+                        const iconImg = iconContainer.createEl('img');
+                        iconImg.src = iconInfo.value;
+                        iconImg.style.width = '16px';
+                        iconImg.style.height = '16px';
+                        iconImg.style.objectFit = 'contain';
+                        iconImg.alt = node.type;
+                        iconImg.title = node.type;
+                        this.addImageErrorHandling(iconImg, iconContainer, node.type);
+                    }
+                } else {
+                    // Regular image (PNG, JPEG, etc.)
+                    const iconImg = iconContainer.createEl('img');
+                    iconImg.src = iconInfo.value;
+                    iconImg.style.width = '16px';
+                    iconImg.style.height = '16px';
+                    iconImg.style.objectFit = 'contain';
+                    iconImg.alt = node.type;
+                    iconImg.title = node.type;
+                    this.addImageErrorHandling(iconImg, iconContainer, node.type);
+                }
+            } else {
+                // Use emoji fallback
+                iconContainer.textContent = iconInfo.value;
+                iconContainer.style.fontSize = '14px';
+                iconContainer.title = node.type;
+            }
+
+            // Work item title
             const titleSpan = row.createEl('span');
             titleSpan.textContent = `[${node.id}] ${node.title}`;
             titleSpan.style.flexGrow = '1';
             titleSpan.style.flexShrink = '1';
-            titleSpan.style.minWidth = '200px'; // Ensure minimum width
+            titleSpan.style.minWidth = '200px';
             titleSpan.style.marginRight = '12px';
             titleSpan.style.cursor = 'pointer';
             titleSpan.style.fontWeight = '500';
@@ -308,6 +478,127 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
+    // Relationship management methods
+    changeParentChild(childNode: WorkItemNode, newParentNode: WorkItemNode) {
+        // Remove from old parent
+        if (childNode.parent) {
+            const oldParent = childNode.parent;
+            oldParent.children = oldParent.children.filter(child => child.id !== childNode.id);
+        } else {
+            // Remove from root nodes
+            this.workItemsTree = this.workItemsTree.filter(node => node.id !== childNode.id);
+        }
+
+        // Add to new parent
+        newParentNode.children.push(childNode);
+        childNode.parent = newParentNode;
+
+        // Sort children
+        this.sortNodes(newParentNode.children);
+
+        // Refresh the tree display
+        this.refreshTreeDisplay();
+
+        new Notice(`Moved [${childNode.id}] ${childNode.title} under [${newParentNode.id}] ${newParentNode.title}. Click "Push Relations" to sync to Azure DevOps.`);
+    }
+
+    isDescendant(ancestor: WorkItemNode, potential: WorkItemNode): boolean {
+        let current = potential.parent;
+        while (current) {
+            if (current.id === ancestor.id) {
+                return true;
+            }
+            current = current.parent;
+        }
+        return false;
+    }
+
+    showDropIndicator(element: HTMLElement, show: boolean) {
+        if (show) {
+            element.style.borderTop = '2px solid var(--interactive-accent)';
+            element.style.backgroundColor = 'var(--background-modifier-hover)';
+        } else {
+            element.style.borderTop = '';
+            element.style.backgroundColor = '';
+        }
+    }
+
+    removeAllDropIndicators() {
+        const rows = this.containerEl.querySelectorAll('[draggable="true"]');
+        rows.forEach(row => {
+            (row as HTMLElement).style.borderTop = '';
+            (row as HTMLElement).style.backgroundColor = '';
+        });
+    }
+
+    async refreshTreeDisplay() {
+        const treeContainer = this.containerEl.children[2] as HTMLElement;
+        if (treeContainer) {
+            treeContainer.empty();
+            this.renderTree(treeContainer, this.workItemsTree);
+        }
+    }
+
+    async pushAllRelationshipChanges() {
+        try {
+            const relationshipUpdates: Array<{childId: number, parentId: number | null}> = [];
+            
+            // Collect all current relationships from the tree
+            const collectRelationships = (node: WorkItemNode, parentId: number | null = null) => {
+                relationshipUpdates.push({
+                    childId: node.id,
+                    parentId: parentId
+                });
+                
+                node.children.forEach(child => {
+                    collectRelationships(child, node.id);
+                });
+            };
+
+            this.workItemsTree.forEach(node => collectRelationships(node));
+
+            new Notice(`Updating relationships for ${relationshipUpdates.length} work items...`);
+
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (const update of relationshipUpdates) {
+                try {
+                    if (update.parentId) {
+                        // Add parent relationship
+                        const success = await this.plugin.api.addParentChildRelationship(update.childId, update.parentId);
+                        if (success) {
+                            successCount++;
+                        } else {
+                            errorCount++;
+                        }
+                    } else {
+                        // This is a root item - we might need to remove existing parent relationships
+                        await this.plugin.api.removeAllParentRelationships(update.childId);
+                        successCount++;
+                    }
+                } catch (error) {
+                    console.error(`Error updating relationship for work item ${update.childId}:`, error);
+                    errorCount++;
+                }
+            }
+
+            if (errorCount === 0) {
+                new Notice(`Successfully updated all ${successCount} relationships!`);
+            } else {
+                new Notice(`Updated ${successCount} relationships, ${errorCount} failed. Check console for details.`);
+            }
+            
+            // Refresh to get latest data from Azure DevOps
+            setTimeout(() => {
+                this.refreshTreeView();
+            }, 2000);
+
+        } catch (error) {
+            new Notice(`Error pushing relationships: ${error.message}`);
+        }
+    }
+
     toggleNode(childrenContainer: HTMLElement, expandBtn: HTMLElement) {
         if (childrenContainer.style.display === 'none') {
             childrenContainer.style.display = 'block';
@@ -342,6 +633,16 @@ export class AzureDevOpsTreeView extends ItemView {
                 .setIcon('external-link')
                 .onClick(() => this.openWorkItemNote(node));
         });
+
+        menu.addSeparator();
+
+        menu.addItem((item) => {
+            item.setTitle('Make Root Item')
+                .setIcon('arrow-up')
+                .onClick(() => this.makeRootItem(node));
+        });
+
+        menu.addSeparator();
 
         menu.addItem((item) => {
             item.setTitle('Pull from Azure DevOps')
@@ -383,7 +684,118 @@ export class AzureDevOpsTreeView extends ItemView {
         menu.showAtMouseEvent(event);
     }
 
+    makeRootItem(node: WorkItemNode) {
+        // Remove from current parent
+        if (node.parent) {
+            const oldParent = node.parent;
+            oldParent.children = oldParent.children.filter(child => child.id !== node.id);
+            node.parent = undefined;
+        }
+
+        // Add to root if not already there
+        if (!this.workItemsTree.find(n => n.id === node.id)) {
+            this.workItemsTree.push(node);
+            this.sortNodes(this.workItemsTree);
+        }
+
+        this.refreshTreeDisplay();
+        new Notice(`Made [${node.id}] ${node.title} a root item. Click "Push Relations" to sync to Azure DevOps.`);
+    }
+
     async onClose() {
         // Cleanup
+    }
+
+    // Load work item type icons from Azure DevOps
+    async loadWorkItemTypeIcons() {
+        try {
+            const workItemTypes = await this.plugin.api.getWorkItemTypes();
+            const iconPromises = [];
+            
+            for (const workItemType of workItemTypes) {
+                const typeName = workItemType.name;
+                const iconUrl = workItemType.icon?.url;
+                
+                if (iconUrl && !this.workItemTypeIcons.has(typeName)) {
+                    if (!this.iconLoadPromises.has(typeName)) {
+                        const iconPromise = this.plugin.api.downloadWorkItemIcon(iconUrl, typeName)
+                            .then((iconDataUrl: string | null) => {
+                                if (iconDataUrl) {
+                                    this.workItemTypeIcons.set(typeName, iconDataUrl);
+                                }
+                                return iconDataUrl;
+                            })
+                            .catch((error: any) => {
+                                console.error(`Error loading icon for ${typeName}:`, error);
+                                return null;
+                            });
+                        
+                        this.iconLoadPromises.set(typeName, iconPromise);
+                        iconPromises.push(iconPromise);
+                    }
+                }
+            }
+            
+            // Wait for all icon downloads to complete
+            if (iconPromises.length > 0) {
+                await Promise.allSettled(iconPromises);
+            }
+            
+            // Clean up promises
+            this.iconLoadPromises.clear();
+            
+        } catch (error) {
+            console.error('Error loading work item type icons:', error);
+        }
+    }
+
+    // Get work item type icon (real icon from Azure DevOps or fallback)
+    getWorkItemTypeIcon(workItemType: string): { type: 'image' | 'text', value: string } {
+        // Check if we have a real icon from Azure DevOps
+        const realIcon = this.workItemTypeIcons.get(workItemType);
+        if (realIcon) {
+            return { type: 'image', value: realIcon };
+        }
+        
+        // Fallback to emoji icons
+        const emojiIcons: { [key: string]: string } = {
+            'Epic': '🎯',
+            'Feature': '🚀',
+            'User Story': '📝',
+            'Task': '✅',
+            'Bug': '🐛',
+            'Issue': '⚠️',
+            'Test Case': '🧪',
+            'Requirement': '📋',
+            'Risk': '⚠️',
+            'Impediment': '🚧'
+        };
+        
+        return { type: 'text', value: emojiIcons[workItemType] || '📋' };
+    }
+
+    // Debug method to check icon loading status
+    debugIconStatus() {
+        console.log('=== ICON DEBUG STATUS ===');
+        console.log('Cached icons:', Array.from(this.workItemTypeIcons.entries()));
+        console.log('Pending icon downloads:', Array.from(this.iconLoadPromises.keys()));
+        
+        // Test if we can access Azure DevOps API
+        this.plugin.api.getWorkItemTypes().then((types: any[]) => {
+            console.log('Available work item types from API:');
+            types.forEach((type: any) => {
+                console.log(`- ${type.name}: icon URL = ${type.icon?.url || 'NO ICON URL'}`);
+            });
+            
+            if (types.length === 0) {
+                console.error('❌ No work item types returned from API - check your connection and permissions');
+            } else if (types.every((type: any) => !type.icon?.url)) {
+                console.warn('⚠️ No work item types have icon URLs - your Azure DevOps project may not have icons configured');
+            } else {
+                console.log('✅ Found work item types with icon URLs');
+            }
+        }).catch((error: any) => {
+            console.error('❌ Failed to fetch work item types:', error);
+        });
     }
 }
