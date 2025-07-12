@@ -1,6 +1,11 @@
 import { App, Notice, TFile } from 'obsidian';
 import { AzureDevOpsAPI } from './api';
 import { AzureDevOpsSettings } from './settings';
+import { marked } from 'marked';
+
+// Use require for TurndownService to avoid TypeScript module issues
+const TurndownService = require('turndown');
+const turndownPluginGfm = require('turndown-plugin-gfm');
 
 interface WorkItemUpdate {
     title?: string;
@@ -10,6 +15,7 @@ interface WorkItemUpdate {
     assignedTo?: string;
     priority?: number;
     tags?: string;
+    needsHtmlConversion?: boolean; // Flag for async HTML conversion
 }
 
 interface RelatedWorkItem {
@@ -24,11 +30,79 @@ export class WorkItemManager {
     settings: AzureDevOpsSettings;
     // Cache for related work item details to avoid repeated API calls
     private relatedItemsCache = new Map<number, RelatedWorkItem>();
-
+    // HTML to Markdown converter
+    private turndownService: any;
+    
     constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings) {
         this.app = app;
         this.api = api;
         this.settings = settings;
+        
+        // Initialize Turndown service for HTML to Markdown conversion
+        this.turndownService = new TurndownService({
+            headingStyle: 'atx',
+            hr: '---',
+            bulletListMarker: '-',
+            codeBlockStyle: 'fenced',
+            fence: '```',
+            emDelimiter: '*',
+            strongDelimiter: '**',
+            linkStyle: 'inlined',
+            linkReferenceStyle: 'full'
+        });
+        
+        // Configure Turndown service for Azure DevOps specific HTML handling
+        this.configureTurndownService();
+        
+        // Add GitHub Flavored Markdown support (including tables)
+        const gfm = turndownPluginGfm.gfm;
+        this.turndownService.use(gfm);
+        
+        // Configure Marked for Markdown to HTML conversion
+        marked.setOptions({
+            gfm: true,
+            breaks: false,
+            pedantic: false
+        });
+    }
+
+    // Configure Turndown service for Azure DevOps specific HTML handling
+    private configureTurndownService() {
+        // Handle Azure DevOps specific elements
+        this.turndownService.addRule('azureDevOpsDiv', {
+            filter: 'div',
+            replacement: function (content: string) {
+                return content + '\n\n';
+            }
+        });
+        
+        // Handle nested lists better
+        this.turndownService.addRule('nestedLists', {
+            filter: ['ul', 'ol'],
+            replacement: function (content: string, node: any) {
+                const parent = node.parentNode;
+                if (parent && parent.nodeName === 'LI') {
+                    return '\n' + content;
+                }
+                return '\n' + content + '\n';
+            }
+        });
+        
+        // Handle line breaks in Azure DevOps content
+        this.turndownService.addRule('lineBreaks', {
+            filter: 'br',
+            replacement: function () {
+                return '\n';
+            }
+        });
+        
+        // Handle Azure DevOps tables (this will be enhanced by the GFM plugin)
+        this.turndownService.addRule('azureTables', {
+            filter: 'table',
+            replacement: function (content: string) {
+                return '\n' + content + '\n';
+            }
+        });
     }
 
     updateSettings(settings: AzureDevOpsSettings) {
@@ -117,8 +191,11 @@ export class WorkItemManager {
                 return false;
             }
 
+            // Process any async HTML conversions needed
+            const processedUpdates = await this.processDescriptionUpdates(updates);
+
             // Push updates to Azure DevOps
-            const success = await this.api.updateWorkItem(workItemId, updates);
+            const success = await this.api.updateWorkItem(workItemId, processedUpdates);
             
             if (success) {
                 // Update the "Last pushed" timestamp in the note
@@ -246,7 +323,7 @@ export class WorkItemManager {
                 // Content is already in Markdown format
                 description = fields['System.Description'];
             } else {
-                // Content is in HTML format, convert to Markdown
+                // Content is in HTML format, convert to Markdown using Turndown
                 description = this.htmlToMarkdown(fields['System.Description']);
             }
         }
@@ -496,12 +573,23 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
                 updates.description = markdownDescription;
                 updates.descriptionFormat = 'Markdown';
             } else {
-                // Convert markdown to HTML for Azure DevOps
-                updates.description = this.markdownToHtml(markdownDescription);
+                // Convert markdown to HTML for Azure DevOps using Marked
+                // Note: This is now async, but we'll handle it in the calling function
+                updates.description = markdownDescription;
                 updates.descriptionFormat = 'HTML';
+                updates.needsHtmlConversion = true; // Flag for async conversion
             }
         }
 
+        return updates;
+    }
+
+    // New method to handle async HTML conversion
+    async processDescriptionUpdates(updates: WorkItemUpdate): Promise<WorkItemUpdate> {
+        if (updates.needsHtmlConversion && updates.description) {
+            updates.description = await this.markdownToHtml(updates.description);
+            delete updates.needsHtmlConversion;
+        }
         return updates;
     }
 
@@ -539,11 +627,105 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
             .substring(0, 100);             // Limit length
     }
 
-    // Convert Markdown to HTML for Azure DevOps
-    markdownToHtml(markdown: string): string {
+    // Convert Markdown to HTML for Azure DevOps using Marked
+    async markdownToHtml(markdown: string): Promise<string> {
         if (!markdown) return '';
         
-        return markdown
+        try {
+            // Use marked to convert markdown to HTML (marked returns a Promise in newer versions)
+            let html = await marked(markdown);
+            
+            // Clean up the HTML for Azure DevOps compatibility
+            html = html
+                // Add borders and styling to tables for Azure DevOps
+                .replace(/<table>/g, '<table border="1" style="border-collapse: collapse; border: 1px solid #ccc;">')
+                .replace(/<th>/g, '<th style="border: 1px solid #ccc; padding: 8px; background-color: #f5f5f5;">')
+                .replace(/<td>/g, '<td style="border: 1px solid #ccc; padding: 8px;">')
+                
+                // Remove extra paragraph tags around single lines
+                .replace(/^<p>(.*)<\/p>$/gm, '$1')
+                
+                // Fix list formatting for Azure DevOps
+                .replace(/<ul>\s*<li>/g, '<ul><li>')
+                .replace(/<\/li>\s*<\/ul>/g, '</li></ul>')
+                .replace(/<ol>\s*<li>/g, '<ol><li>')
+                .replace(/<\/li>\s*<\/ol>/g, '</li></ol>')
+                
+                // Ensure proper spacing
+                .trim();
+            
+            return html;
+        } catch (error) {
+            console.error('Error converting markdown to HTML:', error);
+            // Fallback to original manual conversion if marked fails
+            return this.fallbackMarkdownToHtml(markdown);
+        }
+    }
+
+    // Convert HTML to Markdown when pulling from Azure DevOps using Turndown
+    htmlToMarkdown(html: string): string {
+        if (!html) return '';
+        
+        try {
+            // Clean up Azure DevOps HTML before conversion
+            const cleanedHtml = html
+                // Remove Azure DevOps specific attributes
+                .replace(/\s*(data-[\w-]+|style)="[^"]*"/g, '')
+                // Remove empty paragraphs
+                .replace(/<p>\s*<\/p>/g, '')
+                // Fix malformed HTML
+                .replace(/<br\s*\/?>/gi, '<br>')
+                // Remove script and style tags
+                .replace(/<(script|style)[^>]*>[\s\S]*?<\/(script|style)>/gi, '');
+            
+            // Convert using Turndown
+            let markdown = this.turndownService.turndown(cleanedHtml);
+            
+            // Post-process the markdown for better formatting
+            markdown = markdown
+                // Remove excessive blank lines
+                .replace(/\n{3,}/g, '\n\n')
+                // Fix list spacing
+                .replace(/(\n-\s)/g, '\n- ')
+                .replace(/(\n\d+\.\s)/g, '\n1. ')
+                // Trim whitespace
+                .trim();
+            
+            return markdown;
+        } catch (error) {
+            console.error('Error converting HTML to markdown:', error);
+            // Fallback to original manual conversion if turndown fails
+            return this.fallbackHtmlToMarkdown(html);
+        }
+    }
+
+    // Fallback manual conversion for Markdown to HTML (original method)
+    private fallbackMarkdownToHtml(markdown: string): string {
+        if (!markdown) return '';
+        
+        let html = markdown;
+        
+        // Handle tables first (basic markdown table support)
+        html = html.replace(/\|(.+)\|/g, (match: string, content: string) => {
+            const cells = content.split('|').map((cell: string) => cell.trim());
+            const isHeaderRow = cells.every((cell: string) => cell.includes('-'));
+            
+            if (isHeaderRow) {
+                // Skip separator rows
+                return '';
+            }
+            
+            const cellTags = cells.map((cell: string) => 
+                `<td style="border: 1px solid #ccc; padding: 8px;">${cell}</td>`
+            ).join('');
+            
+            return `<tr>${cellTags}</tr>`;
+        });
+        
+        // Wrap table rows in table tags
+        html = html.replace(/(<tr>.*<\/tr>)/g, '<table border="1" style="border-collapse: collapse; border: 1px solid #ccc;">$1</table>');
+        
+        return html
             // Headers
             .replace(/^### (.*$)/gm, '<h3>$1</h3>')
             .replace(/^## (.*$)/gm, '<h2>$1</h2>')
@@ -574,11 +756,13 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
             .replace(/<p><\/p>/g, '')
             .replace(/<p>(<[hl])/g, '$1')
             .replace(/(<\/[hl][^>]*>)<\/p>/g, '$1')
+            .replace(/<p>(<table)/g, '$1')
+            .replace(/(<\/table>)<\/p>/g, '$1')
             .trim();
     }
 
-    // Convert HTML to Markdown when pulling from Azure DevOps
-    htmlToMarkdown(html: string): string {
+    // Fallback manual conversion for HTML to Markdown (original method)
+    private fallbackHtmlToMarkdown(html: string): string {
         if (!html) return '';
         
         return html
