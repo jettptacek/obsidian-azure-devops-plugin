@@ -15,6 +15,7 @@ interface WorkItemUpdate {
     assignedTo?: string;
     priority?: number;
     tags?: string;
+    customFields?: { [key: string]: any }; // NEW: Support for custom fields
     needsHtmlConversion?: boolean; // Flag for async HTML conversion
 }
 
@@ -28,15 +29,17 @@ export class WorkItemManager {
     app: App;
     api: AzureDevOpsAPI;
     settings: AzureDevOpsSettings;
+    plugin: any; // NEW: Reference to main plugin for tree view access
     // Cache for related work item details to avoid repeated API calls
     private relatedItemsCache = new Map<number, RelatedWorkItem>();
     // HTML to Markdown converter
     private turndownService: any;
     
-    constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings) {
+    constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings, plugin: any) {
         this.app = app;
         this.api = api;
         this.settings = settings;
+        this.plugin = plugin; // NEW: Store plugin reference
         
         // Initialize Turndown service for HTML to Markdown conversion
         this.turndownService = new TurndownService({
@@ -159,6 +162,12 @@ export class WorkItemManager {
         }
 
         new Notice(`Pull complete: ${createdCount} created, ${updatedCount} updated`);
+        
+        // NEW: Refresh change detection in tree view if it exists
+        const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+        if (treeView && typeof treeView.refreshChangeDetection === 'function') {
+            await treeView.refreshChangeDetection();
+        }
     }
 
     // Push a specific work item file to Azure DevOps
@@ -201,6 +210,12 @@ export class WorkItemManager {
                 // Update the "Last pushed" timestamp in the note
                 await this.updateNotePushTimestamp(file, content);
                 new Notice(`Work item ${workItemId} pushed successfully`);
+                
+                // NEW: Refresh change detection in tree view if it exists
+                const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+                if (treeView && typeof treeView.refreshChangeDetection === 'function') {
+                    await treeView.refreshChangeDetection();
+                }
             }
             
             return success;
@@ -245,6 +260,13 @@ export class WorkItemManager {
             await this.app.vault.modify(file, updatedContent);
             
             new Notice(`Work item ${workItemId} pulled successfully`);
+            
+            // NEW: Update change detection for this specific item only
+            const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+            if (treeView && typeof treeView.updateSpecificWorkItemChanges === 'function') {
+                await treeView.updateSpecificWorkItemChanges(workItemId, file);
+            }
+            
             return true;
         } catch (error) {
             new Notice(`Error pulling work item: ${error.message}`);
@@ -332,6 +354,13 @@ export class WorkItemManager {
         const priority = fields['Microsoft.VSTS.Common.Priority'] || '';
         const areaPath = fields['System.AreaPath'] || '';
         const iterationPath = fields['System.IterationPath'] || '';
+
+        // NEW: Extract custom fields
+        console.log('Analyzing work item for custom fields...');
+        const potentialCustomFields = this.debugWorkItemFields(workItem);
+        const customFields = this.extractCustomFields(fields);
+        const customFieldsYaml = this.formatCustomFieldsForYaml(customFields);
+        const customFieldsMarkdown = this.formatCustomFieldsForMarkdown(customFields);
 
         // Process relationships to create all types of links
         const relations = workItem.relations || [];
@@ -435,7 +464,7 @@ areaPath: ${areaPath}
 iterationPath: ${iterationPath}
 tags: ${tags}
 azureUrl: ${azureUrl}
-synced: ${new Date().toISOString()}
+synced: ${new Date().toISOString()}${customFieldsYaml}
 ---
 
 # ${title}
@@ -458,6 +487,8 @@ synced: ${new Date().toISOString()}
 
 ${description}
 
+${customFieldsMarkdown}
+
 ## Links
 
 [View in Azure DevOps](${azureUrl})
@@ -469,6 +500,201 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
 `;
 
         return content;
+    }
+
+    // NEW: Debug method to inspect all fields from a work item
+    debugWorkItemFields(workItem: any) {
+        console.log('=== WORK ITEM FIELD ANALYSIS ===');
+        console.log('Work Item ID:', workItem.id);
+        console.log('Work Item Type:', workItem.fields['System.WorkItemType']);
+        console.log('Total fields:', Object.keys(workItem.fields).length);
+        
+        const systemFields = [];
+        const vstsFields = [];
+        const potentialCustomFields = [];
+        const emptyFields = [];
+        
+        for (const [fieldName, fieldValue] of Object.entries(workItem.fields)) {
+            if (fieldName.startsWith('System.')) {
+                systemFields.push(fieldName);
+            } else if (fieldName.startsWith('Microsoft.VSTS.')) {
+                vstsFields.push(fieldName);
+            } else {
+                if (fieldValue === null || fieldValue === undefined || fieldValue === '') {
+                    emptyFields.push(fieldName);
+                } else {
+                    potentialCustomFields.push({ name: fieldName, value: fieldValue });
+                }
+            }
+        }
+        
+        console.log('\n--- System Fields ---');
+        console.log(systemFields);
+        
+        console.log('\n--- VSTS Fields ---');
+        console.log(vstsFields);
+        
+        console.log('\n--- Potential Custom Fields (with values) ---');
+        potentialCustomFields.forEach(field => {
+            console.log(`${field.name}: ${JSON.stringify(field.value)}`);
+        });
+        
+        console.log('\n--- Empty Fields ---');
+        console.log(emptyFields);
+        
+        console.log('=== END ANALYSIS ===\n');
+        
+        return potentialCustomFields;
+    }
+
+    // NEW: Extract custom fields from Azure DevOps fields
+    extractCustomFields(fields: any): { [key: string]: any } {
+        const customFields: { [key: string]: any } = {};
+        
+        console.log('=== DEBUGGING CUSTOM FIELDS ===');
+        console.log('All fields from Azure DevOps:', Object.keys(fields));
+        
+        // Azure DevOps custom fields can have various patterns
+        for (const [fieldName, fieldValue] of Object.entries(fields)) {
+            console.log(`Checking field: ${fieldName} = ${fieldValue}`);
+            
+            // More comprehensive detection of custom fields
+            const isSystemField = fieldName.startsWith('System.');
+            const isVSTSCommonField = fieldName.startsWith('Microsoft.VSTS.Common.');
+            const isVSTSSchedulingField = fieldName.startsWith('Microsoft.VSTS.Scheduling.');
+            const isVSTSTCMField = fieldName.startsWith('Microsoft.VSTS.TCM.');
+            const isVSTSBuildField = fieldName.startsWith('Microsoft.VSTS.Build.');
+            const isVSTSCodeReviewField = fieldName.startsWith('Microsoft.VSTS.CodeReview.');
+            
+            // NEW: Filter out WEF (Work Item Extension Framework) fields and other system extensions
+            const isWEFField = fieldName.startsWith('WEF_') || 
+                              fieldName.includes('System.Extensionmarker') ||
+                              fieldName.includes('Kanban Column') ||
+                              fieldName.includes('Board Column') ||
+                              fieldName.includes('Board Lane') ||
+                              fieldName.match(/^Wef\s+[0-9a-f]{32}/i); // Matches "Wef 188e8f3dabba4f4ca806652d0e870da0" pattern
+            
+            const isInternalField = fieldName === 'System.Id' || 
+                                   fieldName === 'System.Rev' || 
+                                   fieldName === 'System.AuthorizedDate' || 
+                                   fieldName === 'System.RevisedDate' || 
+                                   fieldName === 'System.Watermark' ||
+                                   fieldName === 'System.PersonId' ||
+                                   fieldName === 'System.AuthorizedAs' ||
+                                   fieldName === 'System.CommentCount' ||
+                                   fieldName === 'System.HyperLinkCount' ||
+                                   fieldName === 'System.AttachedFileCount' ||
+                                   fieldName === 'System.NodeName' ||
+                                   fieldName === 'System.AreaLevel1' ||
+                                   fieldName === 'System.AreaLevel2' ||
+                                   fieldName === 'System.AreaLevel3' ||
+                                   fieldName === 'System.AreaLevel4';
+            
+            // Check if this might be a custom field
+            if (!isSystemField && 
+                !isVSTSCommonField && 
+                !isVSTSSchedulingField && 
+                !isVSTSTCMField && 
+                !isVSTSBuildField && 
+                !isVSTSCodeReviewField && 
+                !isWEFField &&
+                !isInternalField) {
+                
+                // This is likely a custom field
+                console.log(`>>> FOUND CUSTOM FIELD: ${fieldName} = ${fieldValue}`);
+                
+                if (fieldValue !== null && fieldValue !== undefined && fieldValue !== '') {
+                    const cleanFieldName = this.cleanCustomFieldName(fieldName);
+                    customFields[cleanFieldName] = fieldValue;
+                    console.log(`>>> ADDED: ${cleanFieldName} = ${fieldValue}`);
+                } else {
+                    console.log(`>>> SKIPPED (empty value): ${fieldName}`);
+                }
+            } else {
+                if (isWEFField) {
+                    console.log(`>>> SKIPPED (WEF/system extension field): ${fieldName}`);
+                } else {
+                    console.log(`>>> SKIPPED (system field): ${fieldName}`);
+                }
+            }
+        }
+        
+        console.log('Final custom fields:', customFields);
+        console.log('=== END DEBUGGING ===');
+        
+        return customFields;
+    }
+
+    // NEW: Clean up custom field names for YAML and display
+    cleanCustomFieldName(fieldName: string): string {
+        return fieldName
+            .replace(/^(Custom\.|MyCompany\.|Custom_)/i, '') // Remove common prefixes
+            .replace(/[^a-zA-Z0-9_]/g, '_') // Replace special chars with underscore
+            .replace(/_{2,}/g, '_') // Replace multiple underscores with single
+            .replace(/^_|_$/g, '') // Remove leading/trailing underscores
+            .toLowerCase();
+    }
+
+    // NEW: Format custom fields for YAML frontmatter
+    formatCustomFieldsForYaml(customFields: { [key: string]: any }): string {
+        if (Object.keys(customFields).length === 0) {
+            return '';
+        }
+        
+        let yaml = '\n# Custom Fields';
+        for (const [fieldName, fieldValue] of Object.entries(customFields)) {
+            // Handle different value types
+            if (typeof fieldValue === 'string') {
+                yaml += `\n${fieldName}: "${fieldValue.replace(/"/g, '\\"')}"`;
+            } else if (typeof fieldValue === 'number') {
+                yaml += `\n${fieldName}: ${fieldValue}`;
+            } else if (typeof fieldValue === 'boolean') {
+                yaml += `\n${fieldName}: ${fieldValue}`;
+            } else if (fieldValue && typeof fieldValue === 'object') {
+                // Handle complex objects (like person fields)
+                if (fieldValue.displayName) {
+                    yaml += `\n${fieldName}: "${fieldValue.displayName}"`;
+                } else {
+                    yaml += `\n${fieldName}: "${JSON.stringify(fieldValue).replace(/"/g, '\\"')}"`;
+                }
+            } else {
+                yaml += `\n${fieldName}: "${String(fieldValue).replace(/"/g, '\\"')}"`;
+            }
+        }
+        return yaml;
+    }
+
+    // NEW: Format custom fields for markdown display
+    formatCustomFieldsForMarkdown(customFields: { [key: string]: any }): string {
+        if (Object.keys(customFields).length === 0) {
+            return '';
+        }
+        
+        let markdown = '\n## Custom Fields\n\n';
+        for (const [fieldName, fieldValue] of Object.entries(customFields)) {
+            const displayName = this.formatFieldNameForDisplay(fieldName);
+            let displayValue = '';
+            
+            if (typeof fieldValue === 'object' && fieldValue !== null) {
+                if (fieldValue.displayName) {
+                    displayValue = fieldValue.displayName;
+                } else {
+                    displayValue = JSON.stringify(fieldValue, null, 2);
+                }
+            } else {
+                displayValue = String(fieldValue);
+            }
+            
+            markdown += `**${displayName}:** ${displayValue}  \n`;
+        }
+        return markdown;
+    }
+
+    // NEW: Format field names for display
+    formatFieldNameForDisplay(fieldName: string): string {
+        return fieldName
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, l => l.toUpperCase());
     }
 
     // Helper method to format relation types for display
@@ -563,6 +789,12 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
             }
         }
 
+        // NEW: Extract custom fields from frontmatter
+        const customFieldUpdates = this.extractCustomFieldUpdates(frontmatterData);
+        if (Object.keys(customFieldUpdates).length > 0) {
+            updates.customFields = customFieldUpdates;
+        }
+
         // Extract description from Description section
         const descriptionMatch = content.match(/## Description\n\n([\s\S]*?)(?=\n## |---\n\*Last|$)/);
         if (descriptionMatch) {
@@ -581,7 +813,101 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
             }
         }
 
+        // NEW: Extract custom fields from Custom Fields section
+        const customFieldsMatch = content.match(/## Custom Fields\n\n([\s\S]*?)(?=\n## |---\n\*Last|$)/);
+        if (customFieldsMatch) {
+            const customFieldsFromMarkdown = this.parseCustomFieldsFromMarkdown(customFieldsMatch[1]);
+            if (Object.keys(customFieldsFromMarkdown).length > 0) {
+                updates.customFields = { ...updates.customFields, ...customFieldsFromMarkdown };
+            }
+        }
+
         return updates;
+    }
+
+    // NEW: Extract custom field updates from frontmatter
+    extractCustomFieldUpdates(frontmatterData: { [key: string]: string }): { [key: string]: any } {
+        const customFields: { [key: string]: any } = {};
+        
+        // Skip standard fields and look for custom fields
+        const standardFields = new Set([
+            'id', 'title', 'type', 'state', 'assignedTo', 'createdDate', 
+            'changedDate', 'priority', 'areaPath', 'iterationPath', 'tags', 
+            'azureUrl', 'synced'
+        ]);
+        
+        for (const [key, value] of Object.entries(frontmatterData)) {
+            if (!standardFields.has(key) && !key.startsWith('#') && value !== '') {
+                // Convert the cleaned field name back to Azure DevOps format if needed
+                const azureFieldName = this.convertToAzureFieldName(key);
+                customFields[azureFieldName] = this.parseFieldValue(value);
+            }
+        }
+        
+        return customFields;
+    }
+
+    // NEW: Parse custom fields from markdown section
+    parseCustomFieldsFromMarkdown(markdownContent: string): { [key: string]: any } {
+        const customFields: { [key: string]: any } = {};
+        
+        // Parse lines like "**Field Name:** Field Value"
+        const fieldLines = markdownContent.split('\n').filter(line => line.trim().length > 0);
+        
+        for (const line of fieldLines) {
+            const match = line.match(/\*\*([^*]+):\*\*\s*(.+)/);
+            if (match) {
+                const fieldDisplayName = match[1].trim();
+                const fieldValue = match[2].trim();
+                
+                // Convert display name back to field name
+                const fieldName = fieldDisplayName.toLowerCase().replace(/\s+/g, '_');
+                const azureFieldName = this.convertToAzureFieldName(fieldName);
+                customFields[azureFieldName] = this.parseFieldValue(fieldValue);
+            }
+        }
+        
+        return customFields;
+    }
+
+    // NEW: Convert cleaned field name back to Azure DevOps format
+    convertToAzureFieldName(cleanedName: string): string {
+        // This is a best-effort conversion. You might need to maintain a mapping
+        // for more complex scenarios or get the original field names from Azure DevOps
+        
+        // For now, assume custom fields follow the pattern Custom.FieldName
+        if (cleanedName.includes('_')) {
+            // Convert snake_case back to proper casing
+            return 'Custom.' + cleanedName.split('_')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join('');
+        }
+        
+        return 'Custom.' + cleanedName.charAt(0).toUpperCase() + cleanedName.slice(1);
+    }
+
+    // NEW: Parse field value with appropriate type conversion
+    parseFieldValue(value: string): any {
+        // Try to parse as number
+        if (/^\d+$/.test(value)) {
+            return parseInt(value);
+        }
+        
+        // Try to parse as decimal
+        if (/^\d+\.\d+$/.test(value)) {
+            return parseFloat(value);
+        }
+        
+        // Try to parse as boolean
+        if (value.toLowerCase() === 'true') {
+            return true;
+        }
+        if (value.toLowerCase() === 'false') {
+            return false;
+        }
+        
+        // Return as string
+        return value;
     }
 
     // New method to handle async HTML conversion

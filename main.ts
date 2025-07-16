@@ -18,7 +18,7 @@ export default class AzureDevOpsPlugin extends Plugin {
 
         // Initialize managers
         this.api = new AzureDevOpsAPI(this.settings);
-        this.workItemManager = new WorkItemManager(this.app, this.api, this.settings);
+        this.workItemManager = new WorkItemManager(this.app, this.api, this.settings, this);
         this.menuManager = new MenuManager(this.app, this.workItemManager);
 
         // Register the tree view

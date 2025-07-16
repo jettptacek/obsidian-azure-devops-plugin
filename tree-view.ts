@@ -23,6 +23,11 @@ export class AzureDevOpsTreeView extends ItemView {
     private changedRelationships: Map<number, number | null> = new Map();
     private hasUnsavedChanges: boolean = false;
 
+    // NEW: Track content changes in addition to relationship changes
+    private originalNoteContent: Map<number, string> = new Map();
+    private changedNotes: Set<number> = new Set();
+    private fileWatcher: any = null;
+
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
         this.plugin = plugin;
@@ -76,6 +81,45 @@ export class AzureDevOpsTreeView extends ItemView {
                     text-transform: uppercase !important;
                     letter-spacing: 0.5px !important;
                     border: 1px solid #e0a800 !important;
+                    white-space: nowrap !important;
+                }
+
+                /* Different colors for different types of changes */
+                .pending-badge[title*="relationship"] {
+                    background-color: #17a2b8 !important;
+                    color: #0c5460 !important;
+                    border-color: #138496 !important;
+                }
+
+                .pending-badge[title*="content"] {
+                    background-color: #28a745 !important;
+                    color: #155724 !important;
+                    border-color: #1e7e34 !important;
+                }
+
+                .pending-badge[title*="relationship and content"] {
+                    background-color: #dc3545 !important;
+                    color: #721c24 !important;
+                    border-color: #bd2130 !important;
+                }
+
+                /* Enhanced change indicator for push button */
+                .change-indicator {
+                    position: absolute !important;
+                    top: 2px !important;
+                    right: 2px !important;
+                    width: 8px !important;
+                    height: 8px !important;
+                    background-color: #ff4757 !important;
+                    border-radius: 50% !important;
+                    font-size: 0 !important;
+                    animation: pulse-indicator 1.5s ease-in-out infinite;
+                }
+
+                @keyframes pulse-indicator {
+                    0% { transform: scale(1); opacity: 1; }
+                    50% { transform: scale(1.2); opacity: 0.7; }
+                    100% { transform: scale(1); opacity: 1; }
                 }
             `;
             document.head.appendChild(style);
@@ -134,8 +178,26 @@ export class AzureDevOpsTreeView extends ItemView {
 
     // Update push button appearance based on changes
     updatePushButton(button: HTMLElement) {
-        if (this.hasUnsavedChanges && this.changedRelationships.size > 0) {
-            button.textContent = `Push ${this.changedRelationships.size} Change${this.changedRelationships.size !== 1 ? 's' : ''}`;
+        const totalChanges = this.changedRelationships.size + this.changedNotes.size;
+        const hasAnyChanges = totalChanges > 0;
+        
+        if (hasAnyChanges) {
+            const relChanges = this.changedRelationships.size;
+            const contentChanges = this.changedNotes.size;
+            
+            let buttonText = `Push ${totalChanges} Change${totalChanges !== 1 ? 's' : ''}`;
+            let titleText = '';
+            
+            if (relChanges > 0 && contentChanges > 0) {
+                titleText = `${relChanges} relationship change${relChanges !== 1 ? 's' : ''} and ${contentChanges} content change${contentChanges !== 1 ? 's' : ''}`;
+            } else if (relChanges > 0) {
+                titleText = `${relChanges} relationship change${relChanges !== 1 ? 's' : ''}`;
+            } else {
+                titleText = `${contentChanges} content change${contentChanges !== 1 ? 's' : ''}`;
+            }
+            
+            button.textContent = buttonText;
+            button.title = titleText;
             button.className = 'mod-warning';
             button.style.backgroundColor = 'var(--interactive-accent)';
             button.style.color = 'var(--text-on-accent)';
@@ -155,7 +217,8 @@ export class AzureDevOpsTreeView extends ItemView {
                 indicator.style.fontSize = '0';
             }
         } else {
-            button.textContent = 'Push Relations';
+            button.textContent = 'Push Changes';
+            button.title = 'No pending changes';
             button.className = 'mod-secondary';
             button.style.backgroundColor = '';
             button.style.color = '';
@@ -209,12 +272,12 @@ export class AzureDevOpsTreeView extends ItemView {
         refreshBtn.className = 'mod-cta';
         refreshBtn.addEventListener('click', () => this.refreshTreeView());
 
-        const pushRelationsBtn = buttonContainer.createEl('button');
-        pushRelationsBtn.textContent = 'Push Relations';
-        pushRelationsBtn.className = 'mod-warning';
-        pushRelationsBtn.style.position = 'relative';
-        this.updatePushButton(pushRelationsBtn);
-        pushRelationsBtn.addEventListener('click', () => this.pushChangedRelationships());
+        const pushChangesBtn = buttonContainer.createEl('button');
+        pushChangesBtn.textContent = 'Push Changes';
+        pushChangesBtn.className = 'mod-warning';
+        pushChangesBtn.style.position = 'relative';
+        this.updatePushButton(pushChangesBtn);
+        pushChangesBtn.addEventListener('click', () => this.pushAllChanges());
 
         // Instructions
         const instructions = this.containerEl.createDiv();
@@ -222,7 +285,7 @@ export class AzureDevOpsTreeView extends ItemView {
         instructions.style.backgroundColor = 'var(--background-secondary)';
         instructions.style.fontSize = '12px';
         instructions.style.color = 'var(--text-muted)';
-        instructions.innerHTML = '💡 <strong>Drag & Drop:</strong> Drag work items to change parent-child relationships. Click "Push Relations" to sync changes to Azure DevOps.';
+        instructions.innerHTML = '💡 <strong>Drag & Drop:</strong> Drag work items to change parent-child relationships. Edit notes to change content. Click "Push Changes" to sync all changes to Azure DevOps.';
 
         // Tree container
         const treeContainer = this.containerEl.createDiv();
@@ -237,6 +300,10 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     async refreshTreeView() {
+        // Store current change state before refresh
+        const currentChangedNotes = new Set(this.changedNotes);
+        const currentOriginalContent = new Map(this.originalNoteContent);
+        
         this.workItemTypeIcons.clear();
         this.iconLoadPromises.clear();
         this.renderedNodes.clear();
@@ -245,8 +312,85 @@ export class AzureDevOpsTreeView extends ItemView {
         const treeContainer = this.containerEl.children[2] as HTMLElement;
         if (treeContainer) {
             treeContainer.empty();
-            await this.buildTreeView(treeContainer);
+            await this.buildTreeViewPreservingChanges(treeContainer, currentChangedNotes, currentOriginalContent);
         }
+    }
+
+    async buildTreeViewPreservingChanges(container: HTMLElement, preservedChangedNotes: Set<number>, preservedOriginalContent: Map<number, string>) {
+        try {
+            await this.loadWorkItemTypeIcons();
+            
+            const workItems = await this.plugin.getWorkItemsWithRelations();
+            
+            if (workItems.length === 0) {
+                const message = container.createEl('p');
+                message.textContent = 'No work items found. Pull work items first.';
+                message.style.textAlign = 'center';
+                message.style.color = 'var(--text-muted)';
+                return;
+            }
+
+            this.workItemsTree = this.buildWorkItemTree(workItems);
+            this.storeOriginalRelationships(this.workItemsTree);
+            
+            // Store original note content only for NEW work items, preserve existing for changed items
+            await this.storeOriginalNoteContentPreservingChanges(this.workItemsTree, preservedOriginalContent);
+            
+            // Restore the changed notes state
+            this.changedNotes = preservedChangedNotes;
+            
+            // Re-detect changes for any new work items that weren't being tracked before
+            await this.detectNoteChanges(this.workItemsTree);
+            
+            this.initializeExpandedState(this.workItemsTree);
+            this.renderTreeOptimized(container, this.workItemsTree);
+            
+            // Start watching for file changes
+            this.startFileWatcher();
+            
+            // Update toggle button
+            const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
+            if (toggleBtn) {
+                this.updateToggleButton(toggleBtn);
+            }
+            
+        } catch (error) {
+            const errorMsg = container.createEl('p');
+            errorMsg.textContent = `Error loading work items: ${error.message}`;
+            errorMsg.style.color = 'var(--text-error)';
+            errorMsg.style.textAlign = 'center';
+        }
+    }
+
+    // NEW: Store original content but preserve existing original content for items that have changes
+    async storeOriginalNoteContentPreservingChanges(nodes: WorkItemNode[], preservedOriginalContent: Map<number, string>) {
+        const storeContent = async (nodeList: WorkItemNode[]) => {
+            for (const node of nodeList) {
+                if (node.filePath) {
+                    try {
+                        // If we have preserved original content for this work item, use it
+                        if (preservedOriginalContent.has(node.id)) {
+                            this.originalNoteContent.set(node.id, preservedOriginalContent.get(node.id)!);
+                        } else {
+                            // This is a new work item, store its current content as original
+                            const file = this.app.vault.getAbstractFileByPath(node.filePath);
+                            if (file instanceof TFile) {
+                                const content = await this.app.vault.read(file);
+                                this.originalNoteContent.set(node.id, content);
+                            }
+                        }
+                    } catch (error) {
+                        console.log(`Could not read file for work item ${node.id}:`, error);
+                    }
+                }
+                
+                if (node.children.length > 0) {
+                    await storeContent(node.children);
+                }
+            }
+        };
+        
+        await storeContent(nodes);
     }
 
     async buildTreeView(container: HTMLElement) {
@@ -265,8 +409,16 @@ export class AzureDevOpsTreeView extends ItemView {
 
             this.workItemsTree = this.buildWorkItemTree(workItems);
             this.storeOriginalRelationships(this.workItemsTree);
+            
+            // NEW: Store original note content and detect changes
+            await this.storeOriginalNoteContent(this.workItemsTree);
+            await this.detectNoteChanges(this.workItemsTree);
+            
             this.initializeExpandedState(this.workItemsTree);
             this.renderTreeOptimized(container, this.workItemsTree);
+            
+            // NEW: Start watching for file changes
+            this.startFileWatcher();
             
             // Update toggle button
             const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
@@ -279,6 +431,171 @@ export class AzureDevOpsTreeView extends ItemView {
             errorMsg.textContent = `Error loading work items: ${error.message}`;
             errorMsg.style.color = 'var(--text-error)';
             errorMsg.style.textAlign = 'center';
+        }
+    }
+
+    // NEW: Store original note content for change detection
+    async storeOriginalNoteContent(nodes: WorkItemNode[]) {
+        const storeContent = async (nodeList: WorkItemNode[]) => {
+            for (const node of nodeList) {
+                if (node.filePath) {
+                    try {
+                        const file = this.app.vault.getAbstractFileByPath(node.filePath);
+                        if (file instanceof TFile) {
+                            const content = await this.app.vault.read(file);
+                            this.originalNoteContent.set(node.id, content);
+                        }
+                    } catch (error) {
+                        console.log(`Could not read file for work item ${node.id}:`, error);
+                    }
+                }
+                
+                if (node.children.length > 0) {
+                    await storeContent(node.children);
+                }
+            }
+        };
+        
+        await storeContent(nodes);
+    }
+
+    // NEW: Detect which notes have changed
+    async detectNoteChanges(nodes: WorkItemNode[]) {
+        const detectChanges = async (nodeList: WorkItemNode[]) => {
+            for (const node of nodeList) {
+                if (node.filePath) {
+                    try {
+                        const file = this.app.vault.getAbstractFileByPath(node.filePath);
+                        if (file instanceof TFile) {
+                            const currentContent = await this.app.vault.read(file);
+                            const originalContent = this.originalNoteContent.get(node.id);
+                            
+                            if (originalContent && this.hasContentChanged(originalContent, currentContent)) {
+                                this.changedNotes.add(node.id);
+                            } else {
+                                this.changedNotes.delete(node.id);
+                            }
+                        }
+                    } catch (error) {
+                        console.log(`Could not check changes for work item ${node.id}:`, error);
+                    }
+                }
+                
+                if (node.children.length > 0) {
+                    await detectChanges(node.children);
+                }
+            }
+        };
+        
+        this.changedNotes.clear();
+        await detectChanges(nodes);
+    }
+
+    // NEW: Compare note content to detect meaningful changes
+    hasContentChanged(original: string, current: string): boolean {
+        // Normalize content for comparison (ignore timestamp changes and minor formatting)
+        const normalize = (content: string) => {
+            return content
+                // Remove "Last pulled/pushed" timestamps as these change automatically
+                .replace(/\*Last (pulled|pushed): .*\*/g, '')
+                // Remove synced timestamp from frontmatter
+                .replace(/synced: .*$/m, '')
+                // Normalize whitespace
+                .replace(/\s+/g, ' ')
+                .trim();
+        };
+        
+        const normalizedOriginal = normalize(original);
+        const normalizedCurrent = normalize(current);
+        
+        return normalizedOriginal !== normalizedCurrent;
+    }
+
+    // NEW: Start watching for file changes
+    startFileWatcher() {
+        if (this.fileWatcher) {
+            this.app.vault.offref(this.fileWatcher);
+        }
+        
+        this.fileWatcher = this.app.vault.on('modify', async (file: TFile) => {
+            // Check if this is a work item file
+            if (file.path.startsWith('Azure DevOps Work Items/') && file.path.endsWith('.md')) {
+                // Extract work item ID from filename
+                const match = file.name.match(/^WI-(\d+)/);
+                if (match) {
+                    const workItemId = parseInt(match[1]);
+                    await this.checkSingleNoteChange(workItemId, file);
+                }
+            }
+        });
+    }
+
+    // NEW: Check if a single note has changed
+    async checkSingleNoteChange(workItemId: number, file: TFile) {
+        try {
+            const currentContent = await this.app.vault.read(file);
+            const originalContent = this.originalNoteContent.get(workItemId);
+            
+            if (originalContent) {
+                const hasChanged = this.hasContentChanged(originalContent, currentContent);
+                
+                if (hasChanged) {
+                    this.changedNotes.add(workItemId);
+                } else {
+                    this.changedNotes.delete(workItemId);
+                }
+                
+                // Update the visual representation
+                await this.updateNodeVisualState(workItemId);
+                this.updatePushButtonIfExists();
+            }
+        } catch (error) {
+            console.log(`Error checking changes for work item ${workItemId}:`, error);
+        }
+    }
+
+    // NEW: Update visual state of a specific node
+    async updateNodeVisualState(workItemId: number) {
+        const nodeElement = this.nodeElements.get(workItemId);
+        if (nodeElement) {
+            const hasRelationshipChange = this.changedRelationships.has(workItemId);
+            const hasContentChange = this.changedNotes.has(workItemId);
+            const hasPendingChanges = hasRelationshipChange || hasContentChange;
+            
+            if (hasPendingChanges) {
+                nodeElement.classList.add('pending-change');
+            } else {
+                nodeElement.classList.remove('pending-change');
+            }
+            
+            // Update the title container to show the appropriate badge
+            const titleContainer = nodeElement.querySelector('div[style*="flex-grow"]') as HTMLElement;
+            if (titleContainer) {
+                // Remove existing badges
+                const existingBadge = titleContainer.querySelector('.pending-badge');
+                if (existingBadge) {
+                    existingBadge.remove();
+                }
+                
+                // Add new badge if needed
+                if (hasPendingChanges) {
+                    const badge = document.createElement('span');
+                    badge.className = 'pending-badge';
+                    
+                    if (hasRelationshipChange && hasContentChange) {
+                        badge.textContent = 'PENDING (REL + CONTENT)';
+                        badge.title = 'Pending relationship and content changes';
+                    } else if (hasRelationshipChange) {
+                        badge.textContent = 'PENDING (REL)';
+                        badge.title = 'Pending relationship change';
+                    } else {
+                        badge.textContent = 'PENDING (CONTENT)';
+                        badge.title = 'Pending content changes';
+                    }
+                    
+                    titleContainer.appendChild(badge);
+                }
+            }
         }
     }
 
@@ -425,8 +742,11 @@ export class AzureDevOpsTreeView extends ItemView {
         row.draggable = true;
         row.dataset.nodeId = node.id.toString();
         
-        // Apply highlighting if this node has pending changes
-        if (this.changedRelationships.has(node.id)) {
+        // Apply highlighting if this node has ANY pending changes
+        const hasRelationshipChange = this.changedRelationships.has(node.id);
+        const hasContentChange = this.changedNotes.has(node.id);
+        
+        if (hasRelationshipChange || hasContentChange) {
             row.classList.add('pending-change');
         }
         
@@ -519,11 +839,24 @@ export class AzureDevOpsTreeView extends ItemView {
         container.appendChild(titleSpan);
 
         // Add PENDING badge if needed
-        if (this.changedRelationships.has(node.id)) {
+        const hasRelationshipChange = this.changedRelationships.has(node.id);
+        const hasContentChange = this.changedNotes.has(node.id);
+        
+        if (hasRelationshipChange || hasContentChange) {
             const badge = document.createElement('span');
             badge.className = 'pending-badge';
-            badge.textContent = 'PENDING';
-            badge.title = 'Pending relationship change - will be synced to Azure DevOps';
+            
+            if (hasRelationshipChange && hasContentChange) {
+                badge.textContent = 'PENDING (REL + CONTENT)';
+                badge.title = 'Pending relationship and content changes - will be synced to Azure DevOps';
+            } else if (hasRelationshipChange) {
+                badge.textContent = 'PENDING (REL)';
+                badge.title = 'Pending relationship change - will be synced to Azure DevOps';
+            } else {
+                badge.textContent = 'PENDING (CONTENT)';
+                badge.title = 'Pending content changes - will be synced to Azure DevOps';
+            }
+            
             container.appendChild(badge);
         }
 
@@ -802,7 +1135,6 @@ export class AzureDevOpsTreeView extends ItemView {
         expandAllNodes(this.workItemsTree);
         this.isGlobalExpanded = true;
         this.refreshTreeDisplay();
-        new Notice('All nodes expanded');
         
         const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
         if (toggleBtn) {
@@ -814,7 +1146,6 @@ export class AzureDevOpsTreeView extends ItemView {
         this.expandedNodes.clear();
         this.isGlobalExpanded = false;
         this.refreshTreeDisplay();
-        new Notice('All nodes collapsed');
         
         const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
         if (toggleBtn) {
@@ -844,7 +1175,7 @@ export class AzureDevOpsTreeView extends ItemView {
             this.hasUnsavedChanges = true;
         } else {
             this.changedRelationships.delete(childNode.id);
-            if (this.changedRelationships.size === 0) {
+            if (this.changedRelationships.size === 0 && this.changedNotes.size === 0) {
                 this.hasUnsavedChanges = false;
             }
         }
@@ -853,8 +1184,8 @@ export class AzureDevOpsTreeView extends ItemView {
         this.refreshTreeDisplay();
         this.updatePushButtonIfExists();
 
-        const changeCount = this.changedRelationships.size;
-        new Notice(`Moved [${childNode.id}] ${childNode.title} under [${newParentNode.id}] ${newParentNode.title}. ${changeCount} change${changeCount !== 1 ? 's' : ''} pending.`);
+        const totalChanges = this.changedRelationships.size + this.changedNotes.size;
+        new Notice(`Moved [${childNode.id}] ${childNode.title} under [${newParentNode.id}] ${newParentNode.title}. ${totalChanges} change${totalChanges !== 1 ? 's' : ''} pending.`);
     }
 
     isDescendant(ancestor: WorkItemNode, potential: WorkItemNode): boolean {
@@ -891,6 +1222,92 @@ export class AzureDevOpsTreeView extends ItemView {
             
             treeContainer.empty();
             this.renderTreeOptimized(treeContainer, this.workItemsTree);
+        }
+    }
+
+    // NEW: Add method to push all changes (both relationships and content)
+    async pushAllChanges() {
+        const totalChanges = this.changedRelationships.size + this.changedNotes.size;
+        
+        if (totalChanges === 0) {
+            new Notice('No changes to push.');
+            return;
+        }
+
+        try {
+            new Notice(`Pushing ${totalChanges} change${totalChanges !== 1 ? 's' : ''}...`);
+
+            let successCount = 0;
+            let errorCount = 0;
+
+            // Push relationship changes
+            if (this.changedRelationships.size > 0) {
+                const changedItems = Array.from(this.changedRelationships.entries());
+                
+                for (const [childId, newParentId] of changedItems) {
+                    try {
+                        if (newParentId !== null) {
+                            const success = await this.plugin.api.addParentChildRelationship(childId, newParentId);
+                            if (success) {
+                                successCount++;
+                            } else {
+                                errorCount++;
+                            }
+                        } else {
+                            await this.plugin.api.removeAllParentRelationships(childId);
+                            successCount++;
+                        }
+                    } catch (error) {
+                        console.error(`Error updating relationship for work item ${childId}:`, error);
+                        errorCount++;
+                    }
+                }
+            }
+
+            // Push content changes
+            if (this.changedNotes.size > 0) {
+                for (const workItemId of this.changedNotes) {
+                    try {
+                        const node = this.allNodes.get(workItemId);
+                        if (node && node.filePath) {
+                            const file = this.app.vault.getAbstractFileByPath(node.filePath);
+                            if (file instanceof TFile) {
+                                const success = await this.plugin.workItemManager.pushSpecificWorkItem(file);
+                                if (success) {
+                                    successCount++;
+                                    // Update original content since we successfully pushed
+                                    const newContent = await this.app.vault.read(file);
+                                    this.originalNoteContent.set(workItemId, newContent);
+                                    this.changedNotes.delete(workItemId);
+                                } else {
+                                    errorCount++;
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.error(`Error pushing content for work item ${workItemId}:`, error);
+                        errorCount++;
+                    }
+                }
+            }
+
+            if (errorCount === 0) {
+                new Notice(`Successfully pushed all changes!`);
+                this.changedRelationships.clear();
+                this.hasUnsavedChanges = false;
+                this.storeOriginalRelationships(this.workItemsTree);
+            } else {
+                new Notice(`Pushed ${successCount} changes, ${errorCount} failed. Check console for details.`);
+            }
+            
+            this.updatePushButtonIfExists();
+            
+            setTimeout(() => {
+                this.refreshTreeView();
+            }, 1000);
+
+        } catch (error) {
+            new Notice(`Error pushing changes: ${error.message}`);
         }
     }
 
@@ -1042,7 +1459,7 @@ export class AzureDevOpsTreeView extends ItemView {
             this.hasUnsavedChanges = true;
         } else {
             this.changedRelationships.delete(node.id);
-            if (this.changedRelationships.size === 0) {
+            if (this.changedRelationships.size === 0 && this.changedNotes.size === 0) {
                 this.hasUnsavedChanges = false;
             }
         }
@@ -1050,16 +1467,50 @@ export class AzureDevOpsTreeView extends ItemView {
         this.refreshTreeDisplay();
         this.updatePushButtonIfExists();
         
-        const changeCount = this.changedRelationships.size;
-        new Notice(`Made [${node.id}] ${node.title} a root item. ${changeCount} change${changeCount !== 1 ? 's' : ''} pending.`);
+        const totalChanges = this.changedRelationships.size + this.changedNotes.size;
+        new Notice(`Made [${node.id}] ${node.title} a root item. ${totalChanges} change${totalChanges !== 1 ? 's' : ''} pending.`);
+    }
+
+    // NEW: Method to refresh change detection (useful after pull operations)
+    async refreshChangeDetection() {
+        await this.storeOriginalNoteContent(this.workItemsTree);
+        await this.detectNoteChanges(this.workItemsTree);
+        await this.refreshTreeDisplay();
+        this.updatePushButtonIfExists();
+    }
+
+    // NEW: Update change detection for a specific work item only
+    async updateSpecificWorkItemChanges(workItemId: number, file: TFile) {
+        try {
+            // Update the original content for this specific work item
+            const newContent = await this.app.vault.read(file);
+            this.originalNoteContent.set(workItemId, newContent);
+            
+            // Clear any pending content changes for this work item since we just pulled fresh data
+            this.changedNotes.delete(workItemId);
+            
+            // Update the visual state for this specific node
+            await this.updateNodeVisualState(workItemId);
+            this.updatePushButtonIfExists();
+            
+            console.log(`Updated change detection for work item ${workItemId}`);
+        } catch (error) {
+            console.error(`Error updating change detection for work item ${workItemId}:`, error);
+        }
     }
 
     async onClose() {
+        if (this.fileWatcher) {
+            this.app.vault.offref(this.fileWatcher);
+        }
+        
         this.renderedNodes.clear();
         this.nodeElements.clear();
         this.expandedNodes.clear();
         this.originalRelationships.clear();
         this.changedRelationships.clear();
+        this.originalNoteContent.clear();
+        this.changedNotes.clear();
     }
 
     async loadWorkItemTypeIcons() {

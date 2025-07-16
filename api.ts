@@ -330,6 +330,26 @@ export class AzureDevOpsAPI {
             }
         }
 
+        // NEW: Handle custom fields
+        if (updates.customFields) {
+            for (const [fieldName, fieldValue] of Object.entries(updates.customFields)) {
+                if (fieldValue === null || fieldValue === undefined || fieldValue === '') {
+                    // Remove empty custom fields
+                    requestBody.push({
+                        op: 'remove',
+                        path: `/fields/${fieldName}`
+                    });
+                } else {
+                    // Add or update custom field
+                    requestBody.push({
+                        op: 'replace',
+                        path: `/fields/${fieldName}`,
+                        value: fieldValue
+                    });
+                }
+            }
+        }
+
         if (requestBody.length === 0) {
             return false;
         }
@@ -349,12 +369,130 @@ export class AzureDevOpsAPI {
             if (response.status >= 200 && response.status < 300) {
                 return true;
             } else {
+                console.error('Update failed with response:', response.text);
                 new Notice(`Push failed: ${response.status} - ${response.text}`);
                 return false;
             }
         } catch (error) {
+            console.error('Update request error:', error);
             new Notice(`Push failed: ${error.message}`);
             return false;
+        }
+    }
+
+    // NEW: Get all field definitions for the project (useful for custom field discovery)
+    async getWorkItemFields(): Promise<any[]> {
+        if (!this.validateSettings()) return [];
+
+        const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/fields?api-version=7.0`;
+
+        try {
+            const response = await requestUrl({
+                url: url,
+                method: 'GET',
+                headers: {
+                    'Authorization': `Basic ${btoa(':' + this.settings.personalAccessToken)}`
+                },
+                throw: false
+            });
+
+            if (response.status >= 200 && response.status < 300) {
+                return response.json.value || [];
+            } else {
+                console.error('Failed to fetch work item fields:', response.status, response.text);
+                return [];
+            }
+        } catch (error) {
+            console.error('Error fetching work item fields:', error);
+            return [];
+        }
+    }
+
+    // NEW: Get field definitions for a specific work item type
+    async getWorkItemTypeFields(workItemType: string): Promise<any[]> {
+        if (!this.validateSettings()) return [];
+
+        const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/workitemtypes/${encodeURIComponent(workItemType)}/fields?api-version=7.0`;
+
+        try {
+            const response = await requestUrl({
+                url: url,
+                method: 'GET',
+                headers: {
+                    'Authorization': `Basic ${btoa(':' + this.settings.personalAccessToken)}`
+                },
+                throw: false
+            });
+
+            if (response.status >= 200 && response.status < 300) {
+                return response.json.value || [];
+            } else {
+                console.error(`Failed to fetch fields for work item type ${workItemType}:`, response.status, response.text);
+                return [];
+            }
+        } catch (error) {
+            console.error(`Error fetching fields for work item type ${workItemType}:`, error);
+            return [];
+        }
+    }
+
+    // NEW: Validate custom field before updating
+    async validateCustomField(fieldName: string, fieldValue: any, workItemType?: string): Promise<boolean> {
+        if (!this.validateSettings()) return false;
+
+        try {
+            // Get all available fields
+            const allFields = await this.getWorkItemFields();
+            
+            // Check if the field exists
+            const field = allFields.find(f => f.referenceName === fieldName || f.name === fieldName);
+            
+            if (!field) {
+                console.warn(`Custom field ${fieldName} not found in project fields`);
+                return false;
+            }
+
+            // Basic type validation
+            switch (field.type) {
+                case 'Integer':
+                    return !isNaN(parseInt(fieldValue));
+                case 'Double':
+                    return !isNaN(parseFloat(fieldValue));
+                case 'Boolean':
+                    return typeof fieldValue === 'boolean' || fieldValue === 'true' || fieldValue === 'false';
+                case 'String':
+                case 'PlainText':
+                case 'Html':
+                    return typeof fieldValue === 'string';
+                case 'DateTime':
+                    return !isNaN(Date.parse(fieldValue));
+                default:
+                    return true; // Allow other types
+            }
+        } catch (error) {
+            console.error('Error validating custom field:', error);
+            return true; // Allow if validation fails
+        }
+    }
+
+    // NEW: Get custom field definitions (non-system fields)
+    async getCustomFields(): Promise<any[]> {
+        if (!this.validateSettings()) return [];
+
+        try {
+            const allFields = await this.getWorkItemFields();
+            
+            // Filter to custom fields (non-system fields)
+            return allFields.filter(field => 
+                !field.referenceName.startsWith('System.') &&
+                !field.referenceName.startsWith('Microsoft.VSTS.Common.') &&
+                !field.referenceName.startsWith('Microsoft.VSTS.Scheduling.') &&
+                !field.referenceName.startsWith('Microsoft.VSTS.TCM.') &&
+                field.usage !== 'WorkItemTypeExtension' // Exclude internal fields
+            );
+        } catch (error) {
+            console.error('Error fetching custom fields:', error);
+            return [];
         }
     }
 
