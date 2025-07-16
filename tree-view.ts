@@ -8,32 +8,24 @@ export class AzureDevOpsTreeView extends ItemView {
     workItemsTree: WorkItemNode[] = [];
     draggedNode: WorkItemNode | null = null;
     allNodes: Map<number, WorkItemNode> = new Map();
-    workItemTypeIcons: Map<string, string> = new Map(); // Cache for work item type icons
-    iconLoadPromises: Map<string, Promise<string | null>> = new Map(); // Prevent duplicate downloads
+    workItemTypeIcons: Map<string, string> = new Map();
+    iconLoadPromises: Map<string, Promise<string | null>> = new Map();
+    
+    // Performance optimization properties
+    private renderedNodes: Set<number> = new Set();
+    private expandedNodes: Set<number> = new Set();
+    private nodeElements: Map<number, HTMLElement> = new Map();
+    private virtualScrollContainer: HTMLElement | null = null;
+    private isGlobalExpanded: boolean = true;
+    
+    // Track relationship changes
+    private originalRelationships: Map<number, number | null> = new Map(); // childId -> parentId
+    private changedRelationships: Map<number, number | null> = new Map(); // childId -> new parentId
+    private hasUnsavedChanges: boolean = false;
 
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
         this.plugin = plugin;
-    }
-
-    // Helper method for image error handling
-    addImageErrorHandling(iconImg: HTMLImageElement, iconContainer: HTMLElement, workItemType: string) {
-        iconImg.addEventListener('error', () => {
-            console.log(`Failed to display icon for ${workItemType}, falling back to emoji`);
-            // Replace with emoji fallback
-            iconContainer.empty();
-            const emojiIcons: { [key: string]: string } = {
-                'Epic': '🎯', 'Feature': '🚀', 'User Story': '📝', 'Task': '✅', 
-                'Bug': '🐛', 'Issue': '⚠️', 'Test Case': '🧪', 'Requirement': '📋'
-            };
-            iconContainer.textContent = emojiIcons[workItemType] || '📋';
-            iconContainer.style.fontSize = '14px';
-            iconContainer.title = workItemType;
-        });
-        
-        iconImg.addEventListener('load', () => {
-            console.log(`Successfully displayed icon for ${workItemType}`);
-        });
     }
 
     getViewType(): string {
@@ -46,6 +38,93 @@ export class AzureDevOpsTreeView extends ItemView {
 
     getIcon(): string {
         return 'git-branch';
+    }
+
+    // Check if any nodes are expanded
+    hasExpandedNodes(): boolean {
+        return this.expandedNodes.size > 0;
+    }
+
+    // Check if all expandable nodes are expanded
+    areAllExpandableNodesExpanded(): boolean {
+        const getAllExpandableNodes = (nodes: WorkItemNode[]): WorkItemNode[] => {
+            let expandableNodes: WorkItemNode[] = [];
+            for (const node of nodes) {
+                if (node.children.length > 0) {
+                    expandableNodes.push(node);
+                    expandableNodes = expandableNodes.concat(getAllExpandableNodes(node.children));
+                }
+            }
+            return expandableNodes;
+        };
+
+        const allExpandableNodes = getAllExpandableNodes(this.workItemsTree);
+        return allExpandableNodes.length > 0 && allExpandableNodes.every(node => this.expandedNodes.has(node.id));
+    }
+
+    // Update toggle button text and title based on current state
+    updateToggleButton(button: HTMLElement) {
+        if (this.areAllExpandableNodesExpanded()) {
+            button.textContent = '▶ Collapse All';
+            button.title = 'Collapse all nodes';
+        } else {
+            button.textContent = '▼ Expand All';
+            button.title = 'Expand all nodes';
+        }
+    }
+
+    // Toggle between expand all and collapse all
+    toggleAll(button: HTMLElement) {
+        if (this.areAllExpandableNodesExpanded()) {
+            this.collapseAll();
+        } else {
+            this.expandAll();
+        }
+        this.updateToggleButton(button);
+    }
+
+    // Update push button appearance based on changes
+    updatePushButton(button: HTMLElement) {
+        if (this.hasUnsavedChanges && this.changedRelationships.size > 0) {
+            button.textContent = `Push ${this.changedRelationships.size} Change${this.changedRelationships.size !== 1 ? 's' : ''}`;
+            button.className = 'mod-warning';
+            button.style.backgroundColor = 'var(--interactive-accent)';
+            button.style.color = 'var(--text-on-accent)';
+            
+            // Add a small indicator dot
+            let indicator = button.querySelector('.change-indicator') as HTMLElement;
+            if (!indicator) {
+                indicator = button.createEl('span');
+                indicator.className = 'change-indicator';
+                indicator.style.position = 'absolute';
+                indicator.style.top = '2px';
+                indicator.style.right = '2px';
+                indicator.style.width = '8px';
+                indicator.style.height = '8px';
+                indicator.style.backgroundColor = '#ff4757';
+                indicator.style.borderRadius = '50%';
+                indicator.style.fontSize = '0';
+            }
+        } else {
+            button.textContent = 'Push Relations';
+            button.className = 'mod-secondary';
+            button.style.backgroundColor = '';
+            button.style.color = '';
+            
+            // Remove indicator dot
+            const indicator = button.querySelector('.change-indicator');
+            if (indicator) {
+                indicator.remove();
+            }
+        }
+    }
+
+    // Helper to update push button if it exists
+    updatePushButtonIfExists() {
+        const pushBtn = this.containerEl.querySelector('button[class*="mod-warning"], button[class*="mod-secondary"]') as HTMLElement;
+        if (pushBtn && (pushBtn.textContent?.includes('Push') || pushBtn.textContent?.includes('Change'))) {
+            this.updatePushButton(pushBtn);
+        }
     }
 
     async onOpen() {
@@ -63,10 +142,21 @@ export class AzureDevOpsTreeView extends ItemView {
         title.textContent = 'Azure DevOps Work Items';
         title.style.margin = '0';
         
+        // Button container
         const buttonContainer = header.createDiv();
         buttonContainer.style.display = 'flex';
         buttonContainer.style.gap = '8px';
+        buttonContainer.style.alignItems = 'center';
         
+        // Single Expand/Collapse toggle button
+        const toggleBtn = buttonContainer.createEl('button');
+        toggleBtn.className = 'mod-secondary';
+        toggleBtn.style.fontSize = '12px';
+        toggleBtn.style.padding = '4px 8px';
+        toggleBtn.style.marginRight = '8px';
+        this.updateToggleButton(toggleBtn);
+        toggleBtn.addEventListener('click', () => this.toggleAll(toggleBtn));
+
         const refreshBtn = buttonContainer.createEl('button');
         refreshBtn.textContent = 'Refresh';
         refreshBtn.className = 'mod-cta';
@@ -75,7 +165,9 @@ export class AzureDevOpsTreeView extends ItemView {
         const pushRelationsBtn = buttonContainer.createEl('button');
         pushRelationsBtn.textContent = 'Push Relations';
         pushRelationsBtn.className = 'mod-warning';
-        pushRelationsBtn.addEventListener('click', () => this.pushAllRelationshipChanges());
+        pushRelationsBtn.style.position = 'relative';
+        this.updatePushButton(pushRelationsBtn);
+        pushRelationsBtn.addEventListener('click', () => this.pushChangedRelationships());
 
         // Instructions
         const instructions = this.containerEl.createDiv();
@@ -90,14 +182,19 @@ export class AzureDevOpsTreeView extends ItemView {
         treeContainer.style.padding = '10px';
         treeContainer.style.overflowY = 'auto';
         treeContainer.style.maxHeight = 'calc(100vh - 140px)';
+        treeContainer.style.position = 'relative';
+        
+        this.virtualScrollContainer = treeContainer;
         
         await this.buildTreeView(treeContainer);
     }
 
     async refreshTreeView() {
-        // Clear icon cache to force reload
+        // Clear caches
         this.workItemTypeIcons.clear();
         this.iconLoadPromises.clear();
+        this.renderedNodes.clear();
+        this.nodeElements.clear();
         
         const treeContainer = this.containerEl.children[2] as HTMLElement;
         if (treeContainer) {
@@ -122,7 +219,20 @@ export class AzureDevOpsTreeView extends ItemView {
             }
 
             this.workItemsTree = this.buildWorkItemTree(workItems);
-            this.renderTree(container, this.workItemsTree);
+            
+            // Store original relationships for change tracking
+            this.storeOriginalRelationships(this.workItemsTree);
+            
+            // Initialize expanded state for all nodes with children
+            this.initializeExpandedState(this.workItemsTree);
+            
+            this.renderTreeOptimized(container, this.workItemsTree);
+            
+            // Update toggle button after building tree
+            const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
+            if (toggleBtn) {
+                this.updateToggleButton(toggleBtn);
+            }
             
         } catch (error) {
             const errorMsg = container.createEl('p');
@@ -130,6 +240,37 @@ export class AzureDevOpsTreeView extends ItemView {
             errorMsg.style.color = 'var(--text-error)';
             errorMsg.style.textAlign = 'center';
         }
+    }
+
+    // Store original relationships for change tracking
+    storeOriginalRelationships(nodes: WorkItemNode[]) {
+        const storeRelationships = (nodeList: WorkItemNode[], parentId: number | null = null) => {
+            for (const node of nodeList) {
+                this.originalRelationships.set(node.id, parentId);
+                if (node.children.length > 0) {
+                    storeRelationships(node.children, node.id);
+                }
+            }
+        };
+        
+        this.originalRelationships.clear();
+        this.changedRelationships.clear();
+        this.hasUnsavedChanges = false;
+        storeRelationships(nodes);
+        this.updatePushButtonIfExists();
+    }
+
+    // Initialize expanded state for nodes with children
+    initializeExpandedState(nodes: WorkItemNode[]) {
+        const traverse = (nodeList: WorkItemNode[]) => {
+            for (const node of nodeList) {
+                if (node.children.length > 0) {
+                    this.expandedNodes.add(node.id);
+                    traverse(node.children);
+                }
+            }
+        };
+        traverse(nodes);
     }
 
     buildWorkItemTree(workItems: any[]): WorkItemNode[] {
@@ -208,273 +349,605 @@ export class AzureDevOpsTreeView extends ItemView {
         });
     }
 
-    renderTree(container: HTMLElement, nodes: WorkItemNode[], level: number = 0) {
+    // Optimized rendering with lazy loading
+    renderTreeOptimized(container: HTMLElement, nodes: WorkItemNode[], level: number = 0) {
+        const fragment = document.createDocumentFragment();
+        
         for (const node of nodes) {
-            // Create the main row
-            const row = container.createDiv();
-            row.style.display = 'flex';
-            row.style.alignItems = 'center';
-            row.style.padding = '4px 0';
-            row.style.marginLeft = `${level * 20}px`;
-            row.style.minHeight = '32px';
-            row.style.borderRadius = '4px';
-            row.style.cursor = 'grab';
-            row.style.position = 'relative';
-            row.draggable = true;
+            const nodeElement = this.createNodeElement(node, level);
+            fragment.appendChild(nodeElement);
             
-            // Store node reference on element
-            (row as any).workItemNode = node;
-
-            // Drag and drop handlers
-            row.addEventListener('dragstart', (e) => {
-                this.draggedNode = node;
-                row.style.opacity = '0.5';
-                e.dataTransfer!.effectAllowed = 'move';
-                e.dataTransfer!.setData('text/plain', node.id.toString());
-            });
-
-            row.addEventListener('dragend', () => {
-                row.style.opacity = '1';
-                this.draggedNode = null;
-                this.removeAllDropIndicators();
-            });
-
-            row.addEventListener('dragover', (e) => {
-                e.preventDefault();
-                e.dataTransfer!.dropEffect = 'move';
-                
-                if (this.draggedNode && this.draggedNode.id !== node.id && !this.isDescendant(this.draggedNode, node)) {
-                    this.showDropIndicator(row, true);
+            // Store reference for quick access
+            this.nodeElements.set(node.id, nodeElement);
+            
+            // Create children container
+            const childrenContainer = document.createElement('div');
+            childrenContainer.style.display = this.expandedNodes.has(node.id) ? 'block' : 'none';
+            childrenContainer.dataset.nodeId = node.id.toString();
+            childrenContainer.className = 'children-container';
+            
+            if (node.children.length > 0) {
+                // Only render children if parent is expanded
+                if (this.expandedNodes.has(node.id)) {
+                    this.renderTreeOptimized(childrenContainer, node.children, level + 1);
                 }
-            });
+            }
+            
+            fragment.appendChild(childrenContainer);
+        }
+        
+        container.appendChild(fragment);
+    }
 
-            row.addEventListener('dragleave', () => {
-                this.showDropIndicator(row, false);
-            });
+    // Create individual node element
+    createNodeElement(node: WorkItemNode, level: number): HTMLElement {
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.padding = '4px 0';
+        row.style.marginLeft = `${level * 20}px`;
+        row.style.minHeight = '32px';
+        row.style.borderRadius = '4px';
+        row.style.cursor = 'grab';
+        row.style.position = 'relative';
+        row.draggable = true;
+        row.dataset.nodeId = node.id.toString();
+        
+        // Highlight if this node has pending changes
+        this.updateNodeHighlight(row, node);
+        
+        // Store node reference on element
+        (row as any).workItemNode = node;
 
-            row.addEventListener('drop', (e) => {
-                e.preventDefault();
-                this.showDropIndicator(row, false);
+        this.attachDragHandlers(row, node);
+        this.attachHoverHandlers(row);
+
+        // Expand/collapse button
+        const expandBtn = this.createExpandButton(node);
+        row.appendChild(expandBtn);
+
+        // Drag handle
+        const dragHandle = document.createElement('span');
+        dragHandle.textContent = '⋮⋮';
+        dragHandle.style.fontSize = '14px';
+        dragHandle.style.color = 'var(--text-muted)';
+        dragHandle.style.marginRight = '8px';
+        dragHandle.style.cursor = 'grab';
+        dragHandle.style.flexShrink = '0';
+        row.appendChild(dragHandle);
+
+        // Work item type icon
+        const iconContainer = this.createIconContainer(node);
+        row.appendChild(iconContainer);
+
+        // Work item title with change indicator
+        const titleContainer = this.createTitleContainer(node);
+        row.appendChild(titleContainer);
+
+        // State badge
+        const stateBadge = this.createStateBadge(node);
+        row.appendChild(stateBadge);
+
+        // Priority badge
+        if (node.priority) {
+            const priorityBadge = this.createPriorityBadge(node);
+            row.appendChild(priorityBadge);
+        }
+
+        // Assignee badge
+        if (node.assignedTo && node.assignedTo !== 'Unassigned') {
+            const assigneeBadge = this.createAssigneeBadge(node);
+            row.appendChild(assigneeBadge);
+        }
+
+        // Context menu
+        row.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.showContextMenu(e, node);
+        });
+
+        this.renderedNodes.add(node.id);
+        return row;
+    }
+
+    // Update node highlighting based on pending changes
+    updateNodeHighlight(row: HTMLElement, node: WorkItemNode) {
+        const hasChange = this.changedRelationships.has(node.id);
+        
+        if (hasChange) {
+            // Strong color highlighting for the entire work item
+            row.style.backgroundColor = 'rgba(255, 193, 7, 0.2)'; // Warm amber background
+            row.style.borderLeft = '4px solid #ffc107'; // Amber left border
+            row.style.borderRight = '2px solid #ffc107'; // Amber right border
+            row.style.boxShadow = '0 2px 8px rgba(255, 193, 7, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)';
+            row.style.transform = 'translateX(2px)';
+            row.style.transition = 'all 0.2s ease';
+            row.style.position = 'relative';
+            row.classList.add('pending-change');
+            
+            // Add subtle pulsing amber glow
+            row.style.animation = 'amber-glow 3s ease-in-out infinite alternate';
+            
+        } else {
+            // Remove all highlighting
+            row.style.backgroundColor = '';
+            row.style.borderLeft = '';
+            row.style.borderRight = '';
+            row.style.boxShadow = '';
+            row.style.transform = '';
+            row.style.transition = '';
+            row.style.animation = '';
+            row.style.background = '';
+            row.style.backgroundSize = '';
+            row.classList.remove('pending-change');
+        }
+    }
+
+    // Create title container with change indicator
+    createTitleContainer(node: WorkItemNode): HTMLElement {
+        const container = document.createElement('div');
+        container.style.display = 'flex';
+        container.style.alignItems = 'center';
+        container.style.flexGrow = '1';
+        container.style.flexShrink = '1';
+        container.style.minWidth = '200px';
+        container.style.marginRight = '12px';
+
+        // Title span
+        const titleSpan = this.createTitleElement(node);
+        container.appendChild(titleSpan);
+
+        // Change indicator - simple text instead of rotating icon
+        if (this.changedRelationships.has(node.id)) {
+            const changeIndicator = document.createElement('span');
+            changeIndicator.className = 'change-indicator';
+            changeIndicator.textContent = 'PENDING';
+            changeIndicator.style.color = '#856404'; // Dark amber text
+            changeIndicator.style.backgroundColor = '#fff3cd'; // Light amber background
+            changeIndicator.style.fontSize = '10px';
+            changeIndicator.style.fontWeight = 'bold';
+            changeIndicator.style.padding = '2px 6px';
+            changeIndicator.style.borderRadius = '10px';
+            changeIndicator.style.marginLeft = '8px';
+            changeIndicator.style.flexShrink = '0';
+            changeIndicator.style.border = '1px solid #ffc107';
+            changeIndicator.title = 'Pending relationship change - will be synced to Azure DevOps';
+            changeIndicator.style.textTransform = 'uppercase';
+            changeIndicator.style.letterSpacing = '0.5px';
+            
+            // Updated CSS animations for amber theme
+            if (!document.querySelector('#pending-changes-style')) {
+                const style = document.createElement('style');
+                style.id = 'pending-changes-style';
+                style.textContent = `
+                    @keyframes amber-glow {
+                        0% { 
+                            box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3), inset 0 1px 0 rgba(255,255,255,0.1);
+                        }
+                        100% { 
+                            box-shadow: 0 2px 12px rgba(255, 193, 7, 0.5), inset 0 1px 0 rgba(255,255,255,0.2);
+                        }
+                    }
+                    
+                    .pending-change {
+                        position: relative;
+                    }
+                    
+                    .pending-change::before {
+                        content: '';
+                        position: absolute;
+                        left: 0;
+                        top: 0;
+                        bottom: 0;
+                        width: 2px;
+                        background: linear-gradient(180deg, 
+                            transparent 0%, 
+                            #ffc107 20%, 
+                            #ffc107 80%, 
+                            transparent 100%
+                        );
+                        animation: amber-pulse-glow 2s ease-in-out infinite alternate;
+                    }
+                    
+                    @keyframes amber-pulse-glow {
+                        0% { 
+                            opacity: 0.6;
+                            transform: scaleY(0.8);
+                        }
+                        100% { 
+                            opacity: 1;
+                            transform: scaleY(1);
+                        }
+                    }
+                `;
+                document.head.appendChild(style);
+            }
+            
+            container.appendChild(changeIndicator);
+        }
+
+        return container;
+    }
+
+    createTitleElement(node: WorkItemNode): HTMLElement {
+        const titleSpan = document.createElement('span');
+        titleSpan.textContent = `[${node.id}] ${node.title}`;
+        titleSpan.style.flexGrow = '1';
+        titleSpan.style.flexShrink = '1';
+        titleSpan.style.minWidth = '200px';
+        titleSpan.style.cursor = 'pointer';
+        titleSpan.style.fontWeight = '500';
+        titleSpan.style.color = 'var(--text-normal)';
+        titleSpan.style.padding = '4px 8px';
+        titleSpan.style.borderRadius = '4px';
+        titleSpan.style.whiteSpace = 'nowrap';
+        titleSpan.style.overflow = 'hidden';
+        titleSpan.style.textOverflow = 'ellipsis';
+
+        titleSpan.addEventListener('mouseenter', () => {
+            titleSpan.style.backgroundColor = 'var(--interactive-hover)';
+            titleSpan.style.color = 'var(--interactive-accent)';
+        });
+        titleSpan.addEventListener('mouseleave', () => {
+            titleSpan.style.backgroundColor = '';
+            titleSpan.style.color = 'var(--text-normal)';
+        });
+        titleSpan.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.openWorkItemNote(node);
+        });
+
+        return titleSpan;
+    }
+
+    createExpandButton(node: WorkItemNode): HTMLElement {
+        const expandBtn = document.createElement('span');
+        expandBtn.style.width = '20px';
+        expandBtn.style.height = '20px';
+        expandBtn.style.display = 'flex';
+        expandBtn.style.alignItems = 'center';
+        expandBtn.style.justifyContent = 'center';
+        expandBtn.style.cursor = 'pointer';
+        expandBtn.style.fontSize = '12px';
+        expandBtn.style.color = 'var(--text-muted)';
+        expandBtn.style.marginRight = '8px';
+        expandBtn.style.flexShrink = '0';
+
+        if (node.children.length > 0) {
+            expandBtn.textContent = this.expandedNodes.has(node.id) ? '▼' : '▶';
+            expandBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleNodeOptimized(node);
+            });
+        } else {
+            expandBtn.textContent = '•';
+            expandBtn.style.cursor = 'default';
+            expandBtn.style.opacity = '0.5';
+        }
+
+        return expandBtn;
+    }
+
+    createIconContainer(node: WorkItemNode): HTMLElement {
+        const iconContainer = document.createElement('span');
+        iconContainer.style.width = '20px';
+        iconContainer.style.height = '20px';
+        iconContainer.style.display = 'flex';
+        iconContainer.style.alignItems = 'center';
+        iconContainer.style.justifyContent = 'center';
+        iconContainer.style.marginRight = '8px';
+        iconContainer.style.flexShrink = '0';
+
+        const iconInfo = this.getWorkItemTypeIcon(node.type);
+        if (iconInfo.type === 'image') {
+            this.setImageIcon(iconContainer, iconInfo.value, node.type);
+        } else {
+            iconContainer.textContent = iconInfo.value;
+            iconContainer.style.fontSize = '14px';
+            iconContainer.title = node.type;
+        }
+
+        return iconContainer;
+    }
+
+    setImageIcon(container: HTMLElement, iconValue: string, workItemType: string) {
+        if (iconValue.startsWith('data:image/svg+xml')) {
+            const svgData = iconValue.split(',')[1];
+            const svgContent = decodeURIComponent(svgData);
+            
+            try {
+                const parser = new DOMParser();
+                const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
+                const svgElement = svgDoc.documentElement;
                 
-                if (this.draggedNode && this.draggedNode.id !== node.id && !this.isDescendant(this.draggedNode, node)) {
-                    this.changeParentChild(this.draggedNode, node);
+                if (svgElement && svgElement.tagName === 'svg') {
+                    svgElement.setAttribute('width', '16');
+                    svgElement.setAttribute('height', '16');
+                    svgElement.style.width = '16px';
+                    svgElement.style.height = '16px';
+                    container.appendChild(svgElement);
+                } else {
+                    throw new Error('Invalid SVG content');
                 }
-            });
+            } catch (error) {
+                this.setFallbackImage(container, iconValue, workItemType);
+            }
+        } else {
+            this.setFallbackImage(container, iconValue, workItemType);
+        }
+    }
 
-            // Hover effect
-            row.addEventListener('mouseenter', () => {
-                if (!this.draggedNode) {
+    setFallbackImage(container: HTMLElement, iconValue: string, workItemType: string) {
+        const iconImg = document.createElement('img');
+        iconImg.src = iconValue;
+        iconImg.style.width = '16px';
+        iconImg.style.height = '16px';
+        iconImg.style.objectFit = 'contain';
+        iconImg.alt = workItemType;
+        iconImg.title = workItemType;
+        container.appendChild(iconImg);
+        this.addImageErrorHandling(iconImg, container, workItemType);
+    }
+
+    // Helper method for image error handling
+    addImageErrorHandling(iconImg: HTMLImageElement, iconContainer: HTMLElement, workItemType: string) {
+        iconImg.addEventListener('error', () => {
+            console.log(`Failed to display icon for ${workItemType}, falling back to emoji`);
+            iconContainer.empty();
+            const emojiIcons: { [key: string]: string } = {
+                'Epic': '🎯', 'Feature': '🚀', 'User Story': '📝', 'Task': '✅', 
+                'Bug': '🐛', 'Issue': '⚠️', 'Test Case': '🧪', 'Requirement': '📋'
+            };
+            iconContainer.textContent = emojiIcons[workItemType] || '📋';
+            iconContainer.style.fontSize = '14px';
+            iconContainer.title = workItemType;
+        });
+        
+        iconImg.addEventListener('load', () => {
+            console.log(`Successfully displayed icon for ${workItemType}`);
+        });
+    }
+
+    createStateBadge(node: WorkItemNode): HTMLElement {
+        const stateBadge = document.createElement('span');
+        stateBadge.textContent = node.state;
+        stateBadge.style.fontSize = '10px';
+        stateBadge.style.padding = '2px 6px';
+        stateBadge.style.borderRadius = '10px';
+        stateBadge.style.fontWeight = '600';
+        stateBadge.style.textTransform = 'uppercase';
+        stateBadge.style.marginRight = '6px';
+        stateBadge.style.flexShrink = '0';
+        stateBadge.style.whiteSpace = 'nowrap';
+        
+        const stateKey = node.state.toLowerCase().replace(/\s+/g, '-');
+        if (['new', 'active', 'to-do'].includes(stateKey)) {
+            stateBadge.style.backgroundColor = '#e3f2fd';
+            stateBadge.style.color = '#1976d2';
+        } else if (['resolved', 'closed', 'done'].includes(stateKey)) {
+            stateBadge.style.backgroundColor = '#e8f5e8';
+            stateBadge.style.color = '#2e7d32';
+        } else if (stateKey === 'removed') {
+            stateBadge.style.backgroundColor = '#ffebee';
+            stateBadge.style.color = '#c62828';
+        } else {
+            stateBadge.style.backgroundColor = 'var(--background-modifier-border)';
+            stateBadge.style.color = 'var(--text-muted)';
+        }
+
+        return stateBadge;
+    }
+
+    createPriorityBadge(node: WorkItemNode): HTMLElement {
+        const priorityBadge = document.createElement('span');
+        priorityBadge.textContent = `P${node.priority}`;
+        priorityBadge.style.fontSize = '10px';
+        priorityBadge.style.padding = '2px 6px';
+        priorityBadge.style.borderRadius = '6px';
+        priorityBadge.style.backgroundColor = 'var(--background-modifier-border)';
+        priorityBadge.style.color = 'var(--text-muted)';
+        priorityBadge.style.fontWeight = '600';
+        priorityBadge.style.marginRight = '6px';
+        priorityBadge.style.flexShrink = '0';
+        priorityBadge.style.whiteSpace = 'nowrap';
+        return priorityBadge;
+    }
+
+    createAssigneeBadge(node: WorkItemNode): HTMLElement {
+        const assigneeBadge = document.createElement('span');
+        assigneeBadge.textContent = node.assignedTo.split(' ')[0];
+        assigneeBadge.style.fontSize = '10px';
+        assigneeBadge.style.padding = '2px 8px';
+        assigneeBadge.style.borderRadius = '10px';
+        assigneeBadge.style.backgroundColor = 'var(--interactive-accent)';
+        assigneeBadge.style.color = 'var(--text-on-accent)';
+        assigneeBadge.style.fontWeight = '500';
+        assigneeBadge.style.flexShrink = '0';
+        assigneeBadge.style.whiteSpace = 'nowrap';
+        return assigneeBadge;
+    }
+
+    attachDragHandlers(row: HTMLElement, node: WorkItemNode) {
+        row.addEventListener('dragstart', (e) => {
+            this.draggedNode = node;
+            row.style.opacity = '0.5';
+            e.dataTransfer!.effectAllowed = 'move';
+            e.dataTransfer!.setData('text/plain', node.id.toString());
+        });
+
+        row.addEventListener('dragend', () => {
+            row.style.opacity = '1';
+            this.draggedNode = null;
+            this.removeAllDropIndicators();
+        });
+
+        row.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer!.dropEffect = 'move';
+            
+            if (this.draggedNode && this.draggedNode.id !== node.id && !this.isDescendant(this.draggedNode, node)) {
+                this.showDropIndicator(row, true);
+            }
+        });
+
+        row.addEventListener('dragleave', () => {
+            this.showDropIndicator(row, false);
+        });
+
+        row.addEventListener('drop', (e) => {
+            e.preventDefault();
+            this.showDropIndicator(row, false);
+            
+            if (this.draggedNode && this.draggedNode.id !== node.id && !this.isDescendant(this.draggedNode, node)) {
+                this.changeParentChild(this.draggedNode, node);
+            }
+        });
+    }
+
+    attachHoverHandlers(row: HTMLElement) {
+        row.addEventListener('mouseenter', () => {
+            if (!this.draggedNode) {
+                // Don't override pending change highlighting
+                if (!row.classList.contains('pending-change')) {
                     row.style.backgroundColor = 'var(--background-modifier-hover)';
                 }
-            });
-            row.addEventListener('mouseleave', () => {
-                if (!this.draggedNode) {
+            }
+        });
+        row.addEventListener('mouseleave', () => {
+            if (!this.draggedNode) {
+                // Don't override pending change highlighting
+                if (!row.classList.contains('pending-change')) {
                     row.style.backgroundColor = '';
                 }
-            });
-
-            // Expand/collapse button
-            const expandBtn = row.createEl('span');
-            expandBtn.style.width = '20px';
-            expandBtn.style.height = '20px';
-            expandBtn.style.display = 'flex';
-            expandBtn.style.alignItems = 'center';
-            expandBtn.style.justifyContent = 'center';
-            expandBtn.style.cursor = 'pointer';
-            expandBtn.style.fontSize = '12px';
-            expandBtn.style.color = 'var(--text-muted)';
-            expandBtn.style.marginRight = '8px';
-            expandBtn.style.flexShrink = '0';
-
-            if (node.children.length > 0) {
-                expandBtn.textContent = '▼';
-            } else {
-                expandBtn.textContent = '•';
-                expandBtn.style.cursor = 'default';
-                expandBtn.style.opacity = '0.5';
             }
+        });
+    }
 
-            // Drag handle
-            const dragHandle = row.createEl('span');
-            dragHandle.textContent = '⋮⋮';
-            dragHandle.style.fontSize = '14px';
-            dragHandle.style.color = 'var(--text-muted)';
-            dragHandle.style.marginRight = '8px';
-            dragHandle.style.cursor = 'grab';
-            dragHandle.style.flexShrink = '0';
+    // Optimized toggle with lazy rendering
+    toggleNodeOptimized(node: WorkItemNode) {
+        const isExpanded = this.expandedNodes.has(node.id);
+        const childrenContainer = this.virtualScrollContainer?.querySelector(
+            `.children-container[data-node-id="${node.id}"]`
+        ) as HTMLElement;
+        
+        if (!childrenContainer) return;
 
-            // Work item type icon (real Azure DevOps icon or emoji fallback)
-            const iconContainer = row.createEl('span');
-            iconContainer.style.width = '20px';
-            iconContainer.style.height = '20px';
-            iconContainer.style.display = 'flex';
-            iconContainer.style.alignItems = 'center';
-            iconContainer.style.justifyContent = 'center';
-            iconContainer.style.marginRight = '8px';
-            iconContainer.style.flexShrink = '0';
-
-            const iconInfo = this.getWorkItemTypeIcon(node.type);
-            if (iconInfo.type === 'image') {
-                // Use real Azure DevOps icon
-                if (iconInfo.value.startsWith('data:image/svg+xml')) {
-                    // Handle SVG icons differently
-                    iconContainer.innerHTML = '';
-                    const svgData = iconInfo.value.split(',')[1];
-                    const svgContent = decodeURIComponent(svgData);
-                    
-                    try {
-                        // Create SVG element directly
-                        const parser = new DOMParser();
-                        const svgDoc = parser.parseFromString(svgContent, 'image/svg+xml');
-                        const svgElement = svgDoc.documentElement;
-                        
-                        if (svgElement && svgElement.tagName === 'svg') {
-                            // Set SVG attributes for proper display
-                            svgElement.setAttribute('width', '16');
-                            svgElement.setAttribute('height', '16');
-                            svgElement.style.width = '16px';
-                            svgElement.style.height = '16px';
-                            
-                            iconContainer.appendChild(svgElement);
-                        } else {
-                            throw new Error('Invalid SVG content');
-                        }
-                    } catch (error) {
-                        // Fallback to img element
-                        const iconImg = iconContainer.createEl('img');
-                        iconImg.src = iconInfo.value;
-                        iconImg.style.width = '16px';
-                        iconImg.style.height = '16px';
-                        iconImg.style.objectFit = 'contain';
-                        iconImg.alt = node.type;
-                        iconImg.title = node.type;
-                        this.addImageErrorHandling(iconImg, iconContainer, node.type);
-                    }
-                } else {
-                    // Regular image (PNG, JPEG, etc.)
-                    const iconImg = iconContainer.createEl('img');
-                    iconImg.src = iconInfo.value;
-                    iconImg.style.width = '16px';
-                    iconImg.style.height = '16px';
-                    iconImg.style.objectFit = 'contain';
-                    iconImg.alt = node.type;
-                    iconImg.title = node.type;
-                    this.addImageErrorHandling(iconImg, iconContainer, node.type);
-                }
-            } else {
-                // Use emoji fallback
-                iconContainer.textContent = iconInfo.value;
-                iconContainer.style.fontSize = '14px';
-                iconContainer.title = node.type;
-            }
-
-            // Work item title
-            const titleSpan = row.createEl('span');
-            titleSpan.textContent = `[${node.id}] ${node.title}`;
-            titleSpan.style.flexGrow = '1';
-            titleSpan.style.flexShrink = '1';
-            titleSpan.style.minWidth = '200px';
-            titleSpan.style.marginRight = '12px';
-            titleSpan.style.cursor = 'pointer';
-            titleSpan.style.fontWeight = '500';
-            titleSpan.style.color = 'var(--text-normal)';
-            titleSpan.style.padding = '4px 8px';
-            titleSpan.style.borderRadius = '4px';
-            titleSpan.style.whiteSpace = 'nowrap';
-            titleSpan.style.overflow = 'hidden';
-            titleSpan.style.textOverflow = 'ellipsis';
-
-            // Title hover and click
-            titleSpan.addEventListener('mouseenter', () => {
-                titleSpan.style.backgroundColor = 'var(--interactive-hover)';
-                titleSpan.style.color = 'var(--interactive-accent)';
-            });
-            titleSpan.addEventListener('mouseleave', () => {
-                titleSpan.style.backgroundColor = '';
-                titleSpan.style.color = 'var(--text-normal)';
-            });
-            titleSpan.addEventListener('click', (e) => {
-                e.stopPropagation();
-                this.openWorkItemNote(node);
-            });
-
-            // State badge
-            const stateBadge = row.createEl('span');
-            stateBadge.textContent = node.state;
-            stateBadge.style.fontSize = '10px';
-            stateBadge.style.padding = '2px 6px';
-            stateBadge.style.borderRadius = '10px';
-            stateBadge.style.fontWeight = '600';
-            stateBadge.style.textTransform = 'uppercase';
-            stateBadge.style.marginRight = '6px';
-            stateBadge.style.flexShrink = '0';
-            stateBadge.style.whiteSpace = 'nowrap';
+        if (isExpanded) {
+            // Collapse
+            this.expandedNodes.delete(node.id);
+            childrenContainer.style.display = 'none';
+        } else {
+            // Expand
+            this.expandedNodes.add(node.id);
             
-            // State colors
-            const stateKey = node.state.toLowerCase().replace(/\s+/g, '-');
-            if (['new', 'active', 'to-do'].includes(stateKey)) {
-                stateBadge.style.backgroundColor = '#e3f2fd';
-                stateBadge.style.color = '#1976d2';
-            } else if (['resolved', 'closed', 'done'].includes(stateKey)) {
-                stateBadge.style.backgroundColor = '#e8f5e8';
-                stateBadge.style.color = '#2e7d32';
-            } else if (stateKey === 'removed') {
-                stateBadge.style.backgroundColor = '#ffebee';
-                stateBadge.style.color = '#c62828';
-            } else {
-                stateBadge.style.backgroundColor = 'var(--background-modifier-border)';
-                stateBadge.style.color = 'var(--text-muted)';
+            // Lazy load children if not already rendered
+            if (childrenContainer.children.length === 0 && node.children.length > 0) {
+                this.renderTreeOptimized(childrenContainer, node.children, this.getNodeLevel(node) + 1);
+                // Apply highlights to newly rendered children
+                setTimeout(() => this.updateAllNodeHighlights(), 0);
             }
-
-            // Priority badge
-            if (node.priority) {
-                const priorityBadge = row.createEl('span');
-                priorityBadge.textContent = `P${node.priority}`;
-                priorityBadge.style.fontSize = '10px';
-                priorityBadge.style.padding = '2px 6px';
-                priorityBadge.style.borderRadius = '6px';
-                priorityBadge.style.backgroundColor = 'var(--background-modifier-border)';
-                priorityBadge.style.color = 'var(--text-muted)';
-                priorityBadge.style.fontWeight = '600';
-                priorityBadge.style.marginRight = '6px';
-                priorityBadge.style.flexShrink = '0';
-                priorityBadge.style.whiteSpace = 'nowrap';
-            }
-
-            // Assignee badge
-            if (node.assignedTo && node.assignedTo !== 'Unassigned') {
-                const assigneeBadge = row.createEl('span');
-                assigneeBadge.textContent = node.assignedTo.split(' ')[0];
-                assigneeBadge.style.fontSize = '10px';
-                assigneeBadge.style.padding = '2px 8px';
-                assigneeBadge.style.borderRadius = '10px';
-                assigneeBadge.style.backgroundColor = 'var(--interactive-accent)';
-                assigneeBadge.style.color = 'var(--text-on-accent)';
-                assigneeBadge.style.fontWeight = '500';
-                assigneeBadge.style.flexShrink = '0';
-                assigneeBadge.style.whiteSpace = 'nowrap';
-            }
-
-            // Children container
-            const childrenContainer = container.createDiv();
+            
             childrenContainer.style.display = 'block';
+        }
 
-            // Event handlers
-            if (node.children.length > 0) {
-                expandBtn.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.toggleNode(childrenContainer, expandBtn);
-                });
-
-                // Render children
-                this.renderTree(childrenContainer, node.children, level + 1);
+        // Update expand button
+        const nodeElement = this.nodeElements.get(node.id);
+        if (nodeElement) {
+            const expandBtn = nodeElement.querySelector('span');
+            if (expandBtn && node.children.length > 0) {
+                expandBtn.textContent = this.expandedNodes.has(node.id) ? '▼' : '▶';
             }
+        }
 
-            // Context menu
-            row.addEventListener('contextmenu', (e) => {
-                e.preventDefault();
-                this.showContextMenu(e, node);
+        // Update toggle button in header
+        const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
+        if (toggleBtn) {
+            this.updateToggleButton(toggleBtn);
+        }
+    }
+
+    // Get node level for indentation
+    getNodeLevel(node: WorkItemNode): number {
+        let level = 0;
+        let current = node.parent;
+        while (current) {
+            level++;
+            current = current.parent;
+        }
+        return level;
+    }
+
+    // Update all node highlights after changes
+    updateAllNodeHighlights() {
+        // Use setTimeout to ensure DOM is fully rendered
+        setTimeout(() => {
+            this.nodeElements.forEach((element, nodeId) => {
+                const node = this.allNodes.get(nodeId);
+                if (node) {
+                    this.updateNodeHighlight(element, node);
+                    
+                    // Update title container to add/remove change indicator
+                    const titleContainer = element.querySelector('div[style*="flex-grow"]') as HTMLElement;
+                    if (titleContainer) {
+                        // Remove existing container and recreate
+                        const newTitleContainer = this.createTitleContainer(node);
+                        titleContainer.replaceWith(newTitleContainer);
+                    }
+                }
             });
+            
+            // Also check for any newly rendered elements that might not be in nodeElements yet
+            const allRows = this.containerEl.querySelectorAll('[data-node-id]') as NodeListOf<HTMLElement>;
+            allRows.forEach(row => {
+                const nodeId = parseInt(row.dataset.nodeId || '0');
+                if (nodeId && this.changedRelationships.has(nodeId)) {
+                    const node = this.allNodes.get(nodeId);
+                    if (node) {
+                        this.updateNodeHighlight(row, node);
+                        // Update nodeElements map to include this element
+                        this.nodeElements.set(nodeId, row);
+                    }
+                }
+            });
+        }, 10);
+    }
+
+    // Expand all nodes
+    expandAll() {
+        const expandAllNodes = (nodes: WorkItemNode[]) => {
+            for (const node of nodes) {
+                if (node.children.length > 0) {
+                    this.expandedNodes.add(node.id);
+                    expandAllNodes(node.children);
+                }
+            }
+        };
+
+        expandAllNodes(this.workItemsTree);
+        this.isGlobalExpanded = true;
+        this.refreshTreeDisplay();
+        // Note: updateAllNodeHighlights() is now called automatically in refreshTreeDisplay()
+        new Notice('All nodes expanded');
+        
+        // Update toggle button if it exists
+        const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
+        if (toggleBtn) {
+            this.updateToggleButton(toggleBtn);
+        }
+    }
+
+    // Collapse all nodes
+    collapseAll() {
+        this.expandedNodes.clear();
+        this.isGlobalExpanded = false;
+        this.refreshTreeDisplay();
+        // Note: updateAllNodeHighlights() is now called automatically in refreshTreeDisplay()
+        new Notice('All nodes collapsed');
+        
+        // Update toggle button if it exists
+        const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
+        if (toggleBtn) {
+            this.updateToggleButton(toggleBtn);
         }
     }
 
@@ -493,13 +966,31 @@ export class AzureDevOpsTreeView extends ItemView {
         newParentNode.children.push(childNode);
         childNode.parent = newParentNode;
 
+        // Track the change
+        const originalParentId = this.originalRelationships.get(childNode.id);
+        const newParentId = newParentNode.id;
+        
+        if (originalParentId !== newParentId) {
+            this.changedRelationships.set(childNode.id, newParentId);
+            this.hasUnsavedChanges = true;
+        } else {
+            // If we're reverting to original, remove from changed relationships
+            this.changedRelationships.delete(childNode.id);
+            if (this.changedRelationships.size === 0) {
+                this.hasUnsavedChanges = false;
+            }
+        }
+
         // Sort children
         this.sortNodes(newParentNode.children);
 
-        // Refresh the tree display
+        // Refresh the tree display and update push button
         this.refreshTreeDisplay();
+        this.updatePushButtonIfExists();
+        // Note: updateAllNodeHighlights() is now called automatically in refreshTreeDisplay()
 
-        new Notice(`Moved [${childNode.id}] ${childNode.title} under [${newParentNode.id}] ${newParentNode.title}. Click "Push Relations" to sync to Azure DevOps.`);
+        const changeCount = this.changedRelationships.size;
+        new Notice(`Moved [${childNode.id}] ${childNode.title} under [${newParentNode.id}] ${newParentNode.title}. ${changeCount} change${changeCount !== 1 ? 's' : ''} pending.`);
     }
 
     isDescendant(ancestor: WorkItemNode, potential: WorkItemNode): boolean {
@@ -534,78 +1025,78 @@ export class AzureDevOpsTreeView extends ItemView {
     async refreshTreeDisplay() {
         const treeContainer = this.containerEl.children[2] as HTMLElement;
         if (treeContainer) {
+            // Clear caches
+            this.renderedNodes.clear();
+            this.nodeElements.clear();
+            
             treeContainer.empty();
-            this.renderTree(treeContainer, this.workItemsTree);
+            this.renderTreeOptimized(treeContainer, this.workItemsTree);
+            
+            // Re-apply highlights after rendering
+            setTimeout(() => this.updateAllNodeHighlights(), 0);
         }
     }
 
-    async pushAllRelationshipChanges() {
+    async pushChangedRelationships() {
+        if (!this.hasUnsavedChanges || this.changedRelationships.size === 0) {
+            new Notice('No relationship changes to push.');
+            return;
+        }
+
+        const changedItems = Array.from(this.changedRelationships.entries());
+        
         try {
-            const relationshipUpdates: Array<{childId: number, parentId: number | null}> = [];
-            
-            // Collect all current relationships from the tree
-            const collectRelationships = (node: WorkItemNode, parentId: number | null = null) => {
-                relationshipUpdates.push({
-                    childId: node.id,
-                    parentId: parentId
-                });
-                
-                node.children.forEach(child => {
-                    collectRelationships(child, node.id);
-                });
-            };
-
-            this.workItemsTree.forEach(node => collectRelationships(node));
-
-            new Notice(`Updating relationships for ${relationshipUpdates.length} work items...`);
+            new Notice(`Pushing ${changedItems.length} relationship change${changedItems.length !== 1 ? 's' : ''}...`);
 
             let successCount = 0;
             let errorCount = 0;
 
-            for (const update of relationshipUpdates) {
+            for (const [childId, newParentId] of changedItems) {
                 try {
-                    if (update.parentId) {
+                    if (newParentId !== null) {
                         // Add parent relationship
-                        const success = await this.plugin.api.addParentChildRelationship(update.childId, update.parentId);
+                        const success = await this.plugin.api.addParentChildRelationship(childId, newParentId);
                         if (success) {
                             successCount++;
                         } else {
                             errorCount++;
+                            console.error(`Failed to add parent relationship: ${childId} -> ${newParentId}`);
                         }
                     } else {
-                        // This is a root item - we might need to remove existing parent relationships
-                        await this.plugin.api.removeAllParentRelationships(update.childId);
+                        // Remove parent relationship (make root item)
+                        await this.plugin.api.removeAllParentRelationships(childId);
                         successCount++;
                     }
                 } catch (error) {
-                    console.error(`Error updating relationship for work item ${update.childId}:`, error);
+                    console.error(`Error updating relationship for work item ${childId}:`, error);
                     errorCount++;
                 }
             }
 
             if (errorCount === 0) {
-                new Notice(`Successfully updated all ${successCount} relationships!`);
+                new Notice(`Successfully pushed all ${successCount} relationship changes!`);
+                // Clear change tracking since all changes were successful
+                this.changedRelationships.clear();
+                this.hasUnsavedChanges = false;
+                
+                // Update original relationships to current state
+                this.storeOriginalRelationships(this.workItemsTree);
+                
+                // Update all node highlights
+                this.updateAllNodeHighlights();
             } else {
-                new Notice(`Updated ${successCount} relationships, ${errorCount} failed. Check console for details.`);
+                new Notice(`Pushed ${successCount} changes, ${errorCount} failed. Check console for details.`);
             }
+            
+            this.updatePushButtonIfExists();
             
             // Refresh to get latest data from Azure DevOps
             setTimeout(() => {
                 this.refreshTreeView();
-            }, 2000);
+            }, 1000);
 
         } catch (error) {
             new Notice(`Error pushing relationships: ${error.message}`);
-        }
-    }
-
-    toggleNode(childrenContainer: HTMLElement, expandBtn: HTMLElement) {
-        if (childrenContainer.style.display === 'none') {
-            childrenContainer.style.display = 'block';
-            expandBtn.textContent = '▼';
-        } else {
-            childrenContainer.style.display = 'none';
-            expandBtn.textContent = '▶';
         }
     }
 
@@ -698,12 +1189,36 @@ export class AzureDevOpsTreeView extends ItemView {
             this.sortNodes(this.workItemsTree);
         }
 
+        // Track the change
+        const originalParentId = this.originalRelationships.get(node.id);
+        const newParentId = null; // Root item has no parent
+        
+        if (originalParentId !== newParentId) {
+            this.changedRelationships.set(node.id, newParentId);
+            this.hasUnsavedChanges = true;
+        } else {
+            // If we're reverting to original, remove from changed relationships
+            this.changedRelationships.delete(node.id);
+            if (this.changedRelationships.size === 0) {
+                this.hasUnsavedChanges = false;
+            }
+        }
+
         this.refreshTreeDisplay();
-        new Notice(`Made [${node.id}] ${node.title} a root item. Click "Push Relations" to sync to Azure DevOps.`);
+        this.updatePushButtonIfExists();
+        // Note: updateAllNodeHighlights() is now called automatically in refreshTreeDisplay()
+        
+        const changeCount = this.changedRelationships.size;
+        new Notice(`Made [${node.id}] ${node.title} a root item. ${changeCount} change${changeCount !== 1 ? 's' : ''} pending.`);
     }
 
     async onClose() {
         // Cleanup
+        this.renderedNodes.clear();
+        this.nodeElements.clear();
+        this.expandedNodes.clear();
+        this.originalRelationships.clear();
+        this.changedRelationships.clear();
     }
 
     // Load work item type icons from Azure DevOps
