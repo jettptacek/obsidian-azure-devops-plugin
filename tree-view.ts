@@ -19,13 +19,67 @@ export class AzureDevOpsTreeView extends ItemView {
     private isGlobalExpanded: boolean = true;
     
     // Track relationship changes
-    private originalRelationships: Map<number, number | null> = new Map(); // childId -> parentId
-    private changedRelationships: Map<number, number | null> = new Map(); // childId -> new parentId
+    private originalRelationships: Map<number, number | null> = new Map();
+    private changedRelationships: Map<number, number | null> = new Map();
     private hasUnsavedChanges: boolean = false;
 
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
         this.plugin = plugin;
+        this.initializeStyles();
+    }
+
+    // Initialize CSS styles once
+    initializeStyles() {
+        if (!document.querySelector('#azure-devops-tree-styles')) {
+            const style = document.createElement('style');
+            style.id = 'azure-devops-tree-styles';
+            style.textContent = `
+                .azure-tree-row {
+                    transition: all 0.2s ease;
+                }
+                
+                .azure-tree-row.pending-change {
+                    background-color: #fff3cd !important;
+                    border-left: 4px solid #ffc107 !important;
+                    border-right: 2px solid #ffc107 !important;
+                    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3) !important;
+                    transform: translateX(2px) !important;
+                    position: relative !important;
+                    z-index: 10 !important;
+                }
+                
+                .azure-tree-row.pending-change::before {
+                    content: '';
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                    bottom: 0;
+                    width: 2px;
+                    background: #ffc107;
+                    animation: pulse-glow 2s ease-in-out infinite alternate;
+                }
+                
+                @keyframes pulse-glow {
+                    0% { opacity: 0.6; }
+                    100% { opacity: 1; }
+                }
+                
+                .pending-badge {
+                    background-color: #ffc107 !important;
+                    color: #856404 !important;
+                    font-size: 10px !important;
+                    font-weight: bold !important;
+                    padding: 2px 6px !important;
+                    border-radius: 10px !important;
+                    margin-left: 8px !important;
+                    text-transform: uppercase !important;
+                    letter-spacing: 0.5px !important;
+                    border: 1px solid #e0a800 !important;
+                }
+            `;
+            document.head.appendChild(style);
+        }
     }
 
     getViewType(): string {
@@ -38,11 +92,6 @@ export class AzureDevOpsTreeView extends ItemView {
 
     getIcon(): string {
         return 'git-branch';
-    }
-
-    // Check if any nodes are expanded
-    hasExpandedNodes(): boolean {
-        return this.expandedNodes.size > 0;
     }
 
     // Check if all expandable nodes are expanded
@@ -91,7 +140,7 @@ export class AzureDevOpsTreeView extends ItemView {
             button.style.backgroundColor = 'var(--interactive-accent)';
             button.style.color = 'var(--text-on-accent)';
             
-            // Add a small indicator dot
+            // Add indicator dot
             let indicator = button.querySelector('.change-indicator') as HTMLElement;
             if (!indicator) {
                 indicator = button.createEl('span');
@@ -111,7 +160,6 @@ export class AzureDevOpsTreeView extends ItemView {
             button.style.backgroundColor = '';
             button.style.color = '';
             
-            // Remove indicator dot
             const indicator = button.querySelector('.change-indicator');
             if (indicator) {
                 indicator.remove();
@@ -119,7 +167,6 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    // Helper to update push button if it exists
     updatePushButtonIfExists() {
         const pushBtn = this.containerEl.querySelector('button[class*="mod-warning"], button[class*="mod-secondary"]') as HTMLElement;
         if (pushBtn && (pushBtn.textContent?.includes('Push') || pushBtn.textContent?.includes('Change'))) {
@@ -148,7 +195,7 @@ export class AzureDevOpsTreeView extends ItemView {
         buttonContainer.style.gap = '8px';
         buttonContainer.style.alignItems = 'center';
         
-        // Single Expand/Collapse toggle button
+        // Toggle button
         const toggleBtn = buttonContainer.createEl('button');
         toggleBtn.className = 'mod-secondary';
         toggleBtn.style.fontSize = '12px';
@@ -190,7 +237,6 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     async refreshTreeView() {
-        // Clear caches
         this.workItemTypeIcons.clear();
         this.iconLoadPromises.clear();
         this.renderedNodes.clear();
@@ -205,7 +251,6 @@ export class AzureDevOpsTreeView extends ItemView {
 
     async buildTreeView(container: HTMLElement) {
         try {
-            // Load work item type icons first
             await this.loadWorkItemTypeIcons();
             
             const workItems = await this.plugin.getWorkItemsWithRelations();
@@ -219,16 +264,11 @@ export class AzureDevOpsTreeView extends ItemView {
             }
 
             this.workItemsTree = this.buildWorkItemTree(workItems);
-            
-            // Store original relationships for change tracking
             this.storeOriginalRelationships(this.workItemsTree);
-            
-            // Initialize expanded state for all nodes with children
             this.initializeExpandedState(this.workItemsTree);
-            
             this.renderTreeOptimized(container, this.workItemsTree);
             
-            // Update toggle button after building tree
+            // Update toggle button
             const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
             if (toggleBtn) {
                 this.updateToggleButton(toggleBtn);
@@ -242,7 +282,6 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    // Store original relationships for change tracking
     storeOriginalRelationships(nodes: WorkItemNode[]) {
         const storeRelationships = (nodeList: WorkItemNode[], parentId: number | null = null) => {
             for (const node of nodeList) {
@@ -260,7 +299,6 @@ export class AzureDevOpsTreeView extends ItemView {
         this.updatePushButtonIfExists();
     }
 
-    // Initialize expanded state for nodes with children
     initializeExpandedState(nodes: WorkItemNode[]) {
         const traverse = (nodeList: WorkItemNode[]) => {
             for (const node of nodeList) {
@@ -293,7 +331,6 @@ export class AzureDevOpsTreeView extends ItemView {
             nodeMap.set(workItem.id, node);
         }
 
-        // Store all nodes for relationship management
         this.allNodes = nodeMap;
 
         // Build relationships
@@ -349,7 +386,6 @@ export class AzureDevOpsTreeView extends ItemView {
         });
     }
 
-    // Optimized rendering with lazy loading
     renderTreeOptimized(container: HTMLElement, nodes: WorkItemNode[], level: number = 0) {
         const fragment = document.createDocumentFragment();
         
@@ -357,17 +393,14 @@ export class AzureDevOpsTreeView extends ItemView {
             const nodeElement = this.createNodeElement(node, level);
             fragment.appendChild(nodeElement);
             
-            // Store reference for quick access
             this.nodeElements.set(node.id, nodeElement);
             
-            // Create children container
             const childrenContainer = document.createElement('div');
             childrenContainer.style.display = this.expandedNodes.has(node.id) ? 'block' : 'none';
             childrenContainer.dataset.nodeId = node.id.toString();
             childrenContainer.className = 'children-container';
             
             if (node.children.length > 0) {
-                // Only render children if parent is expanded
                 if (this.expandedNodes.has(node.id)) {
                     this.renderTreeOptimized(childrenContainer, node.children, level + 1);
                 }
@@ -379,9 +412,9 @@ export class AzureDevOpsTreeView extends ItemView {
         container.appendChild(fragment);
     }
 
-    // Create individual node element
     createNodeElement(node: WorkItemNode, level: number): HTMLElement {
         const row = document.createElement('div');
+        row.className = 'azure-tree-row';
         row.style.display = 'flex';
         row.style.alignItems = 'center';
         row.style.padding = '4px 0';
@@ -389,14 +422,14 @@ export class AzureDevOpsTreeView extends ItemView {
         row.style.minHeight = '32px';
         row.style.borderRadius = '4px';
         row.style.cursor = 'grab';
-        row.style.position = 'relative';
         row.draggable = true;
         row.dataset.nodeId = node.id.toString();
         
-        // Highlight if this node has pending changes
-        this.updateNodeHighlight(row, node);
+        // Apply highlighting if this node has pending changes
+        if (this.changedRelationships.has(node.id)) {
+            row.classList.add('pending-change');
+        }
         
-        // Store node reference on element
         (row as any).workItemNode = node;
 
         this.attachDragHandlers(row, node);
@@ -420,8 +453,8 @@ export class AzureDevOpsTreeView extends ItemView {
         const iconContainer = this.createIconContainer(node);
         row.appendChild(iconContainer);
 
-        // Work item title with change indicator
-        const titleContainer = this.createTitleContainer(node);
+        // Work item title
+        const titleContainer = this.createTitleElement(node);
         row.appendChild(titleContainer);
 
         // State badge
@@ -450,41 +483,7 @@ export class AzureDevOpsTreeView extends ItemView {
         return row;
     }
 
-    // Update node highlighting based on pending changes
-    updateNodeHighlight(row: HTMLElement, node: WorkItemNode) {
-        const hasChange = this.changedRelationships.has(node.id);
-        
-        if (hasChange) {
-            // Strong color highlighting for the entire work item
-            row.style.backgroundColor = 'rgba(255, 193, 7, 0.2)'; // Warm amber background
-            row.style.borderLeft = '4px solid #ffc107'; // Amber left border
-            row.style.borderRight = '2px solid #ffc107'; // Amber right border
-            row.style.boxShadow = '0 2px 8px rgba(255, 193, 7, 0.3), inset 0 1px 0 rgba(255,255,255,0.1)';
-            row.style.transform = 'translateX(2px)';
-            row.style.transition = 'all 0.2s ease';
-            row.style.position = 'relative';
-            row.classList.add('pending-change');
-            
-            // Add subtle pulsing amber glow
-            row.style.animation = 'amber-glow 3s ease-in-out infinite alternate';
-            
-        } else {
-            // Remove all highlighting
-            row.style.backgroundColor = '';
-            row.style.borderLeft = '';
-            row.style.borderRight = '';
-            row.style.boxShadow = '';
-            row.style.transform = '';
-            row.style.transition = '';
-            row.style.animation = '';
-            row.style.background = '';
-            row.style.backgroundSize = '';
-            row.classList.remove('pending-change');
-        }
-    }
-
-    // Create title container with change indicator
-    createTitleContainer(node: WorkItemNode): HTMLElement {
+    createTitleElement(node: WorkItemNode): HTMLElement {
         const container = document.createElement('div');
         container.style.display = 'flex';
         container.style.alignItems = 'center';
@@ -493,88 +492,8 @@ export class AzureDevOpsTreeView extends ItemView {
         container.style.minWidth = '200px';
         container.style.marginRight = '12px';
 
-        // Title span
-        const titleSpan = this.createTitleElement(node);
-        container.appendChild(titleSpan);
-
-        // Change indicator - simple text instead of rotating icon
-        if (this.changedRelationships.has(node.id)) {
-            const changeIndicator = document.createElement('span');
-            changeIndicator.className = 'change-indicator';
-            changeIndicator.textContent = 'PENDING';
-            changeIndicator.style.color = '#856404'; // Dark amber text
-            changeIndicator.style.backgroundColor = '#fff3cd'; // Light amber background
-            changeIndicator.style.fontSize = '10px';
-            changeIndicator.style.fontWeight = 'bold';
-            changeIndicator.style.padding = '2px 6px';
-            changeIndicator.style.borderRadius = '10px';
-            changeIndicator.style.marginLeft = '8px';
-            changeIndicator.style.flexShrink = '0';
-            changeIndicator.style.border = '1px solid #ffc107';
-            changeIndicator.title = 'Pending relationship change - will be synced to Azure DevOps';
-            changeIndicator.style.textTransform = 'uppercase';
-            changeIndicator.style.letterSpacing = '0.5px';
-            
-            // Updated CSS animations for amber theme
-            if (!document.querySelector('#pending-changes-style')) {
-                const style = document.createElement('style');
-                style.id = 'pending-changes-style';
-                style.textContent = `
-                    @keyframes amber-glow {
-                        0% { 
-                            box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3), inset 0 1px 0 rgba(255,255,255,0.1);
-                        }
-                        100% { 
-                            box-shadow: 0 2px 12px rgba(255, 193, 7, 0.5), inset 0 1px 0 rgba(255,255,255,0.2);
-                        }
-                    }
-                    
-                    .pending-change {
-                        position: relative;
-                    }
-                    
-                    .pending-change::before {
-                        content: '';
-                        position: absolute;
-                        left: 0;
-                        top: 0;
-                        bottom: 0;
-                        width: 2px;
-                        background: linear-gradient(180deg, 
-                            transparent 0%, 
-                            #ffc107 20%, 
-                            #ffc107 80%, 
-                            transparent 100%
-                        );
-                        animation: amber-pulse-glow 2s ease-in-out infinite alternate;
-                    }
-                    
-                    @keyframes amber-pulse-glow {
-                        0% { 
-                            opacity: 0.6;
-                            transform: scaleY(0.8);
-                        }
-                        100% { 
-                            opacity: 1;
-                            transform: scaleY(1);
-                        }
-                    }
-                `;
-                document.head.appendChild(style);
-            }
-            
-            container.appendChild(changeIndicator);
-        }
-
-        return container;
-    }
-
-    createTitleElement(node: WorkItemNode): HTMLElement {
         const titleSpan = document.createElement('span');
         titleSpan.textContent = `[${node.id}] ${node.title}`;
-        titleSpan.style.flexGrow = '1';
-        titleSpan.style.flexShrink = '1';
-        titleSpan.style.minWidth = '200px';
         titleSpan.style.cursor = 'pointer';
         titleSpan.style.fontWeight = '500';
         titleSpan.style.color = 'var(--text-normal)';
@@ -597,7 +516,18 @@ export class AzureDevOpsTreeView extends ItemView {
             this.openWorkItemNote(node);
         });
 
-        return titleSpan;
+        container.appendChild(titleSpan);
+
+        // Add PENDING badge if needed
+        if (this.changedRelationships.has(node.id)) {
+            const badge = document.createElement('span');
+            badge.className = 'pending-badge';
+            badge.textContent = 'PENDING';
+            badge.title = 'Pending relationship change - will be synced to Azure DevOps';
+            container.appendChild(badge);
+        }
+
+        return container;
     }
 
     createExpandButton(node: WorkItemNode): HTMLElement {
@@ -689,7 +619,6 @@ export class AzureDevOpsTreeView extends ItemView {
         this.addImageErrorHandling(iconImg, container, workItemType);
     }
 
-    // Helper method for image error handling
     addImageErrorHandling(iconImg: HTMLImageElement, iconContainer: HTMLElement, workItemType: string) {
         iconImg.addEventListener('error', () => {
             console.log(`Failed to display icon for ${workItemType}, falling back to emoji`);
@@ -701,10 +630,6 @@ export class AzureDevOpsTreeView extends ItemView {
             iconContainer.textContent = emojiIcons[workItemType] || '📋';
             iconContainer.style.fontSize = '14px';
             iconContainer.title = workItemType;
-        });
-        
-        iconImg.addEventListener('load', () => {
-            console.log(`Successfully displayed icon for ${workItemType}`);
         });
     }
 
@@ -806,24 +731,17 @@ export class AzureDevOpsTreeView extends ItemView {
 
     attachHoverHandlers(row: HTMLElement) {
         row.addEventListener('mouseenter', () => {
-            if (!this.draggedNode) {
-                // Don't override pending change highlighting
-                if (!row.classList.contains('pending-change')) {
-                    row.style.backgroundColor = 'var(--background-modifier-hover)';
-                }
+            if (!this.draggedNode && !row.classList.contains('pending-change')) {
+                row.style.backgroundColor = 'var(--background-modifier-hover)';
             }
         });
         row.addEventListener('mouseleave', () => {
-            if (!this.draggedNode) {
-                // Don't override pending change highlighting
-                if (!row.classList.contains('pending-change')) {
-                    row.style.backgroundColor = '';
-                }
+            if (!this.draggedNode && !row.classList.contains('pending-change')) {
+                row.style.backgroundColor = '';
             }
         });
     }
 
-    // Optimized toggle with lazy rendering
     toggleNodeOptimized(node: WorkItemNode) {
         const isExpanded = this.expandedNodes.has(node.id);
         const childrenContainer = this.virtualScrollContainer?.querySelector(
@@ -833,18 +751,13 @@ export class AzureDevOpsTreeView extends ItemView {
         if (!childrenContainer) return;
 
         if (isExpanded) {
-            // Collapse
             this.expandedNodes.delete(node.id);
             childrenContainer.style.display = 'none';
         } else {
-            // Expand
             this.expandedNodes.add(node.id);
             
-            // Lazy load children if not already rendered
             if (childrenContainer.children.length === 0 && node.children.length > 0) {
                 this.renderTreeOptimized(childrenContainer, node.children, this.getNodeLevel(node) + 1);
-                // Apply highlights to newly rendered children
-                setTimeout(() => this.updateAllNodeHighlights(), 0);
             }
             
             childrenContainer.style.display = 'block';
@@ -866,7 +779,6 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    // Get node level for indentation
     getNodeLevel(node: WorkItemNode): number {
         let level = 0;
         let current = node.parent;
@@ -877,42 +789,6 @@ export class AzureDevOpsTreeView extends ItemView {
         return level;
     }
 
-    // Update all node highlights after changes
-    updateAllNodeHighlights() {
-        // Use setTimeout to ensure DOM is fully rendered
-        setTimeout(() => {
-            this.nodeElements.forEach((element, nodeId) => {
-                const node = this.allNodes.get(nodeId);
-                if (node) {
-                    this.updateNodeHighlight(element, node);
-                    
-                    // Update title container to add/remove change indicator
-                    const titleContainer = element.querySelector('div[style*="flex-grow"]') as HTMLElement;
-                    if (titleContainer) {
-                        // Remove existing container and recreate
-                        const newTitleContainer = this.createTitleContainer(node);
-                        titleContainer.replaceWith(newTitleContainer);
-                    }
-                }
-            });
-            
-            // Also check for any newly rendered elements that might not be in nodeElements yet
-            const allRows = this.containerEl.querySelectorAll('[data-node-id]') as NodeListOf<HTMLElement>;
-            allRows.forEach(row => {
-                const nodeId = parseInt(row.dataset.nodeId || '0');
-                if (nodeId && this.changedRelationships.has(nodeId)) {
-                    const node = this.allNodes.get(nodeId);
-                    if (node) {
-                        this.updateNodeHighlight(row, node);
-                        // Update nodeElements map to include this element
-                        this.nodeElements.set(nodeId, row);
-                    }
-                }
-            });
-        }, 10);
-    }
-
-    // Expand all nodes
     expandAll() {
         const expandAllNodes = (nodes: WorkItemNode[]) => {
             for (const node of nodes) {
@@ -926,39 +802,32 @@ export class AzureDevOpsTreeView extends ItemView {
         expandAllNodes(this.workItemsTree);
         this.isGlobalExpanded = true;
         this.refreshTreeDisplay();
-        // Note: updateAllNodeHighlights() is now called automatically in refreshTreeDisplay()
         new Notice('All nodes expanded');
         
-        // Update toggle button if it exists
         const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
         if (toggleBtn) {
             this.updateToggleButton(toggleBtn);
         }
     }
 
-    // Collapse all nodes
     collapseAll() {
         this.expandedNodes.clear();
         this.isGlobalExpanded = false;
         this.refreshTreeDisplay();
-        // Note: updateAllNodeHighlights() is now called automatically in refreshTreeDisplay()
         new Notice('All nodes collapsed');
         
-        // Update toggle button if it exists
         const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
         if (toggleBtn) {
             this.updateToggleButton(toggleBtn);
         }
     }
 
-    // Relationship management methods
     changeParentChild(childNode: WorkItemNode, newParentNode: WorkItemNode) {
         // Remove from old parent
         if (childNode.parent) {
             const oldParent = childNode.parent;
             oldParent.children = oldParent.children.filter(child => child.id !== childNode.id);
         } else {
-            // Remove from root nodes
             this.workItemsTree = this.workItemsTree.filter(node => node.id !== childNode.id);
         }
 
@@ -974,20 +843,15 @@ export class AzureDevOpsTreeView extends ItemView {
             this.changedRelationships.set(childNode.id, newParentId);
             this.hasUnsavedChanges = true;
         } else {
-            // If we're reverting to original, remove from changed relationships
             this.changedRelationships.delete(childNode.id);
             if (this.changedRelationships.size === 0) {
                 this.hasUnsavedChanges = false;
             }
         }
 
-        // Sort children
         this.sortNodes(newParentNode.children);
-
-        // Refresh the tree display and update push button
         this.refreshTreeDisplay();
         this.updatePushButtonIfExists();
-        // Note: updateAllNodeHighlights() is now called automatically in refreshTreeDisplay()
 
         const changeCount = this.changedRelationships.size;
         new Notice(`Moved [${childNode.id}] ${childNode.title} under [${newParentNode.id}] ${newParentNode.title}. ${changeCount} change${changeCount !== 1 ? 's' : ''} pending.`);
@@ -1007,10 +871,8 @@ export class AzureDevOpsTreeView extends ItemView {
     showDropIndicator(element: HTMLElement, show: boolean) {
         if (show) {
             element.style.borderTop = '2px solid var(--interactive-accent)';
-            element.style.backgroundColor = 'var(--background-modifier-hover)';
         } else {
             element.style.borderTop = '';
-            element.style.backgroundColor = '';
         }
     }
 
@@ -1018,22 +880,17 @@ export class AzureDevOpsTreeView extends ItemView {
         const rows = this.containerEl.querySelectorAll('[draggable="true"]');
         rows.forEach(row => {
             (row as HTMLElement).style.borderTop = '';
-            (row as HTMLElement).style.backgroundColor = '';
         });
     }
 
     async refreshTreeDisplay() {
         const treeContainer = this.containerEl.children[2] as HTMLElement;
         if (treeContainer) {
-            // Clear caches
             this.renderedNodes.clear();
             this.nodeElements.clear();
             
             treeContainer.empty();
             this.renderTreeOptimized(treeContainer, this.workItemsTree);
-            
-            // Re-apply highlights after rendering
-            setTimeout(() => this.updateAllNodeHighlights(), 0);
         }
     }
 
@@ -1054,16 +911,13 @@ export class AzureDevOpsTreeView extends ItemView {
             for (const [childId, newParentId] of changedItems) {
                 try {
                     if (newParentId !== null) {
-                        // Add parent relationship
                         const success = await this.plugin.api.addParentChildRelationship(childId, newParentId);
                         if (success) {
                             successCount++;
                         } else {
                             errorCount++;
-                            console.error(`Failed to add parent relationship: ${childId} -> ${newParentId}`);
                         }
                     } else {
-                        // Remove parent relationship (make root item)
                         await this.plugin.api.removeAllParentRelationships(childId);
                         successCount++;
                     }
@@ -1075,22 +929,15 @@ export class AzureDevOpsTreeView extends ItemView {
 
             if (errorCount === 0) {
                 new Notice(`Successfully pushed all ${successCount} relationship changes!`);
-                // Clear change tracking since all changes were successful
                 this.changedRelationships.clear();
                 this.hasUnsavedChanges = false;
-                
-                // Update original relationships to current state
                 this.storeOriginalRelationships(this.workItemsTree);
-                
-                // Update all node highlights
-                this.updateAllNodeHighlights();
             } else {
                 new Notice(`Pushed ${successCount} changes, ${errorCount} failed. Check console for details.`);
             }
             
             this.updatePushButtonIfExists();
             
-            // Refresh to get latest data from Azure DevOps
             setTimeout(() => {
                 this.refreshTreeView();
             }, 1000);
@@ -1176,28 +1023,24 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     makeRootItem(node: WorkItemNode) {
-        // Remove from current parent
         if (node.parent) {
             const oldParent = node.parent;
             oldParent.children = oldParent.children.filter(child => child.id !== node.id);
             node.parent = undefined;
         }
 
-        // Add to root if not already there
         if (!this.workItemsTree.find(n => n.id === node.id)) {
             this.workItemsTree.push(node);
             this.sortNodes(this.workItemsTree);
         }
 
-        // Track the change
         const originalParentId = this.originalRelationships.get(node.id);
-        const newParentId = null; // Root item has no parent
+        const newParentId = null;
         
         if (originalParentId !== newParentId) {
             this.changedRelationships.set(node.id, newParentId);
             this.hasUnsavedChanges = true;
         } else {
-            // If we're reverting to original, remove from changed relationships
             this.changedRelationships.delete(node.id);
             if (this.changedRelationships.size === 0) {
                 this.hasUnsavedChanges = false;
@@ -1206,14 +1049,12 @@ export class AzureDevOpsTreeView extends ItemView {
 
         this.refreshTreeDisplay();
         this.updatePushButtonIfExists();
-        // Note: updateAllNodeHighlights() is now called automatically in refreshTreeDisplay()
         
         const changeCount = this.changedRelationships.size;
         new Notice(`Made [${node.id}] ${node.title} a root item. ${changeCount} change${changeCount !== 1 ? 's' : ''} pending.`);
     }
 
     async onClose() {
-        // Cleanup
         this.renderedNodes.clear();
         this.nodeElements.clear();
         this.expandedNodes.clear();
@@ -1221,7 +1062,6 @@ export class AzureDevOpsTreeView extends ItemView {
         this.changedRelationships.clear();
     }
 
-    // Load work item type icons from Azure DevOps
     async loadWorkItemTypeIcons() {
         try {
             const workItemTypes = await this.plugin.api.getWorkItemTypes();
@@ -1251,12 +1091,10 @@ export class AzureDevOpsTreeView extends ItemView {
                 }
             }
             
-            // Wait for all icon downloads to complete
             if (iconPromises.length > 0) {
                 await Promise.allSettled(iconPromises);
             }
             
-            // Clean up promises
             this.iconLoadPromises.clear();
             
         } catch (error) {
@@ -1264,15 +1102,12 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    // Get work item type icon (real icon from Azure DevOps or fallback)
     getWorkItemTypeIcon(workItemType: string): { type: 'image' | 'text', value: string } {
-        // Check if we have a real icon from Azure DevOps
         const realIcon = this.workItemTypeIcons.get(workItemType);
         if (realIcon) {
             return { type: 'image', value: realIcon };
         }
         
-        // Fallback to emoji icons
         const emojiIcons: { [key: string]: string } = {
             'Epic': '🎯',
             'Feature': '🚀',
@@ -1289,13 +1124,11 @@ export class AzureDevOpsTreeView extends ItemView {
         return { type: 'text', value: emojiIcons[workItemType] || '📋' };
     }
 
-    // Debug method to check icon loading status
     debugIconStatus() {
         console.log('=== ICON DEBUG STATUS ===');
         console.log('Cached icons:', Array.from(this.workItemTypeIcons.entries()));
         console.log('Pending icon downloads:', Array.from(this.iconLoadPromises.keys()));
         
-        // Test if we can access Azure DevOps API
         this.plugin.api.getWorkItemTypes().then((types: any[]) => {
             console.log('Available work item types from API:');
             types.forEach((type: any) => {
