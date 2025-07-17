@@ -58,24 +58,5 @@ export class AzureDevOpsSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
-        // Add section for work item type customization
-        containerEl.createEl('h3', { text: 'Work Item Type Configuration' });
-        
-        const desc = containerEl.createEl('p');
-        desc.innerHTML = `
-            <strong>Current supported work item types:</strong><br>
-            🎯 Epic (Priority 1)<br>
-            🚀 Feature (Priority 2)<br>
-            📝 User Story (Priority 3)<br>
-            ✅ Task (Priority 4)<br>
-            🐛 Bug (Priority 5)<br>
-            ⚠️ Issue (Priority 6)<br>
-            🧪 Test Case<br>
-            📋 Requirement<br>
-            🚧 Impediment<br><br>
-            
-            <em>Unknown work item types will display with 📋 icon and appear at the bottom of the hierarchy.</em><br>
-            <em>To add custom work item types, modify the plugin's source code in the tree-view.ts file.</em>
-        `;
     }
 }
