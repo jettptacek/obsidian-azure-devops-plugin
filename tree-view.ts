@@ -23,7 +23,7 @@ export class AzureDevOpsTreeView extends ItemView {
     private changedRelationships: Map<number, number | null> = new Map();
     private hasUnsavedChanges: boolean = false;
 
-    // NEW: Track content changes in addition to relationship changes
+    // Track content changes in addition to relationship changes
     private originalNoteContent: Map<number, string> = new Map();
     private changedNotes: Set<number> = new Set();
     private fileWatcher: any = null;
@@ -84,7 +84,6 @@ export class AzureDevOpsTreeView extends ItemView {
                     white-space: nowrap !important;
                 }
 
-                /* Different colors for different types of changes */
                 .pending-badge[title*="relationship"] {
                     background-color: #17a2b8 !important;
                     color: #0c5460 !important;
@@ -103,7 +102,6 @@ export class AzureDevOpsTreeView extends ItemView {
                     border-color: #bd2130 !important;
                 }
 
-                /* Enhanced change indicator for push button */
                 .change-indicator {
                     position: absolute !important;
                     top: 2px !important;
@@ -207,14 +205,6 @@ export class AzureDevOpsTreeView extends ItemView {
             if (!indicator) {
                 indicator = button.createEl('span');
                 indicator.className = 'change-indicator';
-                indicator.style.position = 'absolute';
-                indicator.style.top = '2px';
-                indicator.style.right = '2px';
-                indicator.style.width = '8px';
-                indicator.style.height = '8px';
-                indicator.style.backgroundColor = '#ff4757';
-                indicator.style.borderRadius = '50%';
-                indicator.style.fontSize = '0';
             }
         } else {
             button.textContent = 'Push Changes';
@@ -231,8 +221,8 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     updatePushButtonIfExists() {
-        const pushBtn = this.containerEl.querySelector('button[class*="mod-warning"], button[class*="mod-secondary"]') as HTMLElement;
-        if (pushBtn && (pushBtn.textContent?.includes('Push') || pushBtn.textContent?.includes('Change'))) {
+        const pushBtn = this.containerEl.querySelector('.push-changes-btn') as HTMLElement;
+        if (pushBtn) {
             this.updatePushButton(pushBtn);
         }
     }
@@ -260,7 +250,7 @@ export class AzureDevOpsTreeView extends ItemView {
         
         // Toggle button
         const toggleBtn = buttonContainer.createEl('button');
-        toggleBtn.className = 'mod-secondary';
+        toggleBtn.className = 'mod-secondary toggle-all-btn';
         toggleBtn.style.fontSize = '12px';
         toggleBtn.style.padding = '4px 8px';
         toggleBtn.style.marginRight = '8px';
@@ -274,16 +264,17 @@ export class AzureDevOpsTreeView extends ItemView {
 
         const pushChangesBtn = buttonContainer.createEl('button');
         pushChangesBtn.textContent = 'Push Changes';
-        pushChangesBtn.className = 'mod-warning';
+        pushChangesBtn.className = 'mod-warning push-changes-btn';
         pushChangesBtn.style.position = 'relative';
         this.updatePushButton(pushChangesBtn);
         pushChangesBtn.addEventListener('click', () => this.pushAllChanges());
 
         // Tree container
         const treeContainer = this.containerEl.createDiv();
+        treeContainer.className = 'azure-tree-container';
         treeContainer.style.padding = '10px';
         treeContainer.style.overflowY = 'auto';
-        treeContainer.style.maxHeight = 'calc(100vh - 140px)';
+        treeContainer.style.maxHeight = 'calc(100vh - 100px)';
         treeContainer.style.position = 'relative';
         
         this.virtualScrollContainer = treeContainer;
@@ -301,10 +292,51 @@ export class AzureDevOpsTreeView extends ItemView {
         this.renderedNodes.clear();
         this.nodeElements.clear();
         
-        const treeContainer = this.containerEl.children[2] as HTMLElement;
+        const treeContainer = this.containerEl.querySelector('.azure-tree-container') as HTMLElement;
         if (treeContainer) {
             treeContainer.empty();
             await this.buildTreeViewPreservingChanges(treeContainer, currentChangedNotes, currentOriginalContent);
+        }
+    }
+
+    async buildTreeView(container: HTMLElement) {
+        try {
+            await this.loadWorkItemTypeIcons();
+            
+            const workItems = await this.plugin.getWorkItemsWithRelations();
+            
+            if (workItems.length === 0) {
+                const message = container.createEl('p');
+                message.textContent = 'No work items found. Pull work items first.';
+                message.style.textAlign = 'center';
+                message.style.color = 'var(--text-muted)';
+                return;
+            }
+
+            this.workItemsTree = this.buildWorkItemTree(workItems);
+            this.storeOriginalRelationships(this.workItemsTree);
+            
+            // Store original note content and detect changes
+            await this.storeOriginalNoteContent(this.workItemsTree);
+            await this.detectNoteChanges(this.workItemsTree);
+            
+            this.initializeExpandedState(this.workItemsTree);
+            this.renderTreeOptimized(container, this.workItemsTree);
+            
+            // Start watching for file changes
+            this.startFileWatcher();
+            
+            // Update toggle button
+            const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
+            if (toggleBtn) {
+                this.updateToggleButton(toggleBtn);
+            }
+            
+        } catch (error) {
+            const errorMsg = container.createEl('p');
+            errorMsg.textContent = `Error loading work items: ${error.message}`;
+            errorMsg.style.color = 'var(--text-error)';
+            errorMsg.style.textAlign = 'center';
         }
     }
 
@@ -341,7 +373,7 @@ export class AzureDevOpsTreeView extends ItemView {
             this.startFileWatcher();
             
             // Update toggle button
-            const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
+            const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
             if (toggleBtn) {
                 this.updateToggleButton(toggleBtn);
             }
@@ -354,7 +386,32 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    // NEW: Store original content but preserve existing original content for items that have changes
+    // Store original note content for change detection
+    async storeOriginalNoteContent(nodes: WorkItemNode[]) {
+        const storeContent = async (nodeList: WorkItemNode[]) => {
+            for (const node of nodeList) {
+                if (node.filePath) {
+                    try {
+                        const file = this.app.vault.getAbstractFileByPath(node.filePath);
+                        if (file instanceof TFile) {
+                            const content = await this.app.vault.read(file);
+                            this.originalNoteContent.set(node.id, content);
+                        }
+                    } catch (error) {
+                        console.log(`Could not read file for work item ${node.id}:`, error);
+                    }
+                }
+                
+                if (node.children.length > 0) {
+                    await storeContent(node.children);
+                }
+            }
+        };
+        
+        await storeContent(nodes);
+    }
+
+    // Store original content but preserve existing original content for items that have changes
     async storeOriginalNoteContentPreservingChanges(nodes: WorkItemNode[], preservedOriginalContent: Map<number, string>) {
         const storeContent = async (nodeList: WorkItemNode[]) => {
             for (const node of nodeList) {
@@ -385,73 +442,7 @@ export class AzureDevOpsTreeView extends ItemView {
         await storeContent(nodes);
     }
 
-    async buildTreeView(container: HTMLElement) {
-        try {
-            await this.loadWorkItemTypeIcons();
-            
-            const workItems = await this.plugin.getWorkItemsWithRelations();
-            
-            if (workItems.length === 0) {
-                const message = container.createEl('p');
-                message.textContent = 'No work items found. Pull work items first.';
-                message.style.textAlign = 'center';
-                message.style.color = 'var(--text-muted)';
-                return;
-            }
-
-            this.workItemsTree = this.buildWorkItemTree(workItems);
-            this.storeOriginalRelationships(this.workItemsTree);
-            
-            // NEW: Store original note content and detect changes
-            await this.storeOriginalNoteContent(this.workItemsTree);
-            await this.detectNoteChanges(this.workItemsTree);
-            
-            this.initializeExpandedState(this.workItemsTree);
-            this.renderTreeOptimized(container, this.workItemsTree);
-            
-            // NEW: Start watching for file changes
-            this.startFileWatcher();
-            
-            // Update toggle button
-            const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
-            if (toggleBtn) {
-                this.updateToggleButton(toggleBtn);
-            }
-            
-        } catch (error) {
-            const errorMsg = container.createEl('p');
-            errorMsg.textContent = `Error loading work items: ${error.message}`;
-            errorMsg.style.color = 'var(--text-error)';
-            errorMsg.style.textAlign = 'center';
-        }
-    }
-
-    // NEW: Store original note content for change detection
-    async storeOriginalNoteContent(nodes: WorkItemNode[]) {
-        const storeContent = async (nodeList: WorkItemNode[]) => {
-            for (const node of nodeList) {
-                if (node.filePath) {
-                    try {
-                        const file = this.app.vault.getAbstractFileByPath(node.filePath);
-                        if (file instanceof TFile) {
-                            const content = await this.app.vault.read(file);
-                            this.originalNoteContent.set(node.id, content);
-                        }
-                    } catch (error) {
-                        console.log(`Could not read file for work item ${node.id}:`, error);
-                    }
-                }
-                
-                if (node.children.length > 0) {
-                    await storeContent(node.children);
-                }
-            }
-        };
-        
-        await storeContent(nodes);
-    }
-
-    // NEW: Detect which notes have changed
+    // Detect which notes have changed
     async detectNoteChanges(nodes: WorkItemNode[]) {
         const detectChanges = async (nodeList: WorkItemNode[]) => {
             for (const node of nodeList) {
@@ -483,7 +474,7 @@ export class AzureDevOpsTreeView extends ItemView {
         await detectChanges(nodes);
     }
 
-    // NEW: Compare note content to detect meaningful changes
+    // Compare note content to detect meaningful changes
     hasContentChanged(original: string, current: string): boolean {
         // Normalize content for comparison (ignore timestamp changes and minor formatting)
         const normalize = (content: string) => {
@@ -503,7 +494,7 @@ export class AzureDevOpsTreeView extends ItemView {
         return normalizedOriginal !== normalizedCurrent;
     }
 
-    // NEW: Start watching for file changes
+    // Start watching for file changes
     startFileWatcher() {
         if (this.fileWatcher) {
             this.app.vault.offref(this.fileWatcher);
@@ -522,7 +513,7 @@ export class AzureDevOpsTreeView extends ItemView {
         });
     }
 
-    // NEW: Check if a single note has changed
+    // Check if a single note has changed
     async checkSingleNoteChange(workItemId: number, file: TFile) {
         try {
             const currentContent = await this.app.vault.read(file);
@@ -546,7 +537,7 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    // NEW: Update visual state of a specific node
+    // Update visual state of a specific node
     async updateNodeVisualState(workItemId: number) {
         const nodeElement = this.nodeElements.get(workItemId);
         if (nodeElement) {
@@ -1097,8 +1088,8 @@ export class AzureDevOpsTreeView extends ItemView {
             }
         }
 
-        // Update toggle button in header
-        const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
+        // Update toggle button
+        const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
         if (toggleBtn) {
             this.updateToggleButton(toggleBtn);
         }
@@ -1128,7 +1119,7 @@ export class AzureDevOpsTreeView extends ItemView {
         this.isGlobalExpanded = true;
         this.refreshTreeDisplay();
         
-        const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
+        const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
         if (toggleBtn) {
             this.updateToggleButton(toggleBtn);
         }
@@ -1139,7 +1130,7 @@ export class AzureDevOpsTreeView extends ItemView {
         this.isGlobalExpanded = false;
         this.refreshTreeDisplay();
         
-        const toggleBtn = this.containerEl.querySelector('button[title*="nodes"]') as HTMLElement;
+        const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
         if (toggleBtn) {
             this.updateToggleButton(toggleBtn);
         }
@@ -1207,7 +1198,7 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     async refreshTreeDisplay() {
-        const treeContainer = this.containerEl.children[2] as HTMLElement;
+        const treeContainer = this.containerEl.querySelector('.azure-tree-container') as HTMLElement;
         if (treeContainer) {
             this.renderedNodes.clear();
             this.nodeElements.clear();
@@ -1217,7 +1208,6 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    // NEW: Add method to push all changes (both relationships and content)
     async pushAllChanges() {
         const totalChanges = this.changedRelationships.size + this.changedNotes.size;
         
@@ -1300,59 +1290,6 @@ export class AzureDevOpsTreeView extends ItemView {
 
         } catch (error) {
             new Notice(`Error pushing changes: ${error.message}`);
-        }
-    }
-
-    async pushChangedRelationships() {
-        if (!this.hasUnsavedChanges || this.changedRelationships.size === 0) {
-            new Notice('No relationship changes to push.');
-            return;
-        }
-
-        const changedItems = Array.from(this.changedRelationships.entries());
-        
-        try {
-            new Notice(`Pushing ${changedItems.length} relationship change${changedItems.length !== 1 ? 's' : ''}...`);
-
-            let successCount = 0;
-            let errorCount = 0;
-
-            for (const [childId, newParentId] of changedItems) {
-                try {
-                    if (newParentId !== null) {
-                        const success = await this.plugin.api.addParentChildRelationship(childId, newParentId);
-                        if (success) {
-                            successCount++;
-                        } else {
-                            errorCount++;
-                        }
-                    } else {
-                        await this.plugin.api.removeAllParentRelationships(childId);
-                        successCount++;
-                    }
-                } catch (error) {
-                    console.error(`Error updating relationship for work item ${childId}:`, error);
-                    errorCount++;
-                }
-            }
-
-            if (errorCount === 0) {
-                new Notice(`Successfully pushed all ${successCount} relationship changes!`);
-                this.changedRelationships.clear();
-                this.hasUnsavedChanges = false;
-                this.storeOriginalRelationships(this.workItemsTree);
-            } else {
-                new Notice(`Pushed ${successCount} changes, ${errorCount} failed. Check console for details.`);
-            }
-            
-            this.updatePushButtonIfExists();
-            
-            setTimeout(() => {
-                this.refreshTreeView();
-            }, 1000);
-
-        } catch (error) {
-            new Notice(`Error pushing relationships: ${error.message}`);
         }
     }
 
@@ -1463,7 +1400,6 @@ export class AzureDevOpsTreeView extends ItemView {
         new Notice(`Made [${node.id}] ${node.title} a root item. ${totalChanges} change${totalChanges !== 1 ? 's' : ''} pending.`);
     }
 
-    // NEW: Method to refresh change detection (useful after pull operations)
     async refreshChangeDetection() {
         await this.storeOriginalNoteContent(this.workItemsTree);
         await this.detectNoteChanges(this.workItemsTree);
@@ -1471,7 +1407,6 @@ export class AzureDevOpsTreeView extends ItemView {
         this.updatePushButtonIfExists();
     }
 
-    // NEW: Update change detection for a specific work item only
     async updateSpecificWorkItemChanges(workItemId: number, file: TFile) {
         try {
             // Update the original content for this specific work item
@@ -1565,28 +1500,5 @@ export class AzureDevOpsTreeView extends ItemView {
         };
         
         return { type: 'text', value: emojiIcons[workItemType] || '📋' };
-    }
-
-    debugIconStatus() {
-        console.log('=== ICON DEBUG STATUS ===');
-        console.log('Cached icons:', Array.from(this.workItemTypeIcons.entries()));
-        console.log('Pending icon downloads:', Array.from(this.iconLoadPromises.keys()));
-        
-        this.plugin.api.getWorkItemTypes().then((types: any[]) => {
-            console.log('Available work item types from API:');
-            types.forEach((type: any) => {
-                console.log(`- ${type.name}: icon URL = ${type.icon?.url || 'NO ICON URL'}`);
-            });
-            
-            if (types.length === 0) {
-                console.error('❌ No work item types returned from API - check your connection and permissions');
-            } else if (types.every((type: any) => !type.icon?.url)) {
-                console.warn('⚠️ No work item types have icon URLs - your Azure DevOps project may not have icons configured');
-            } else {
-                console.log('✅ Found work item types with icon URLs');
-            }
-        }).catch((error: any) => {
-            console.error('❌ Failed to fetch work item types:', error);
-        });
     }
 }
