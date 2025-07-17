@@ -114,70 +114,98 @@ export class WorkItemManager {
 
     // Pull work items to Obsidian notes
     async pullWorkItems() {
-        const workItems = await this.api.getWorkItems();
+        // Show loading indicator
+        const loadingNotice = new Notice('🔄 Pulling work items from Azure DevOps...', 0); // 0 = don't auto-hide
         
-        if (workItems.length === 0) {
-            return;
-        }
-
-        const folderPath = 'Azure DevOps Work Items';
-        
-        // Create folder if it doesn't exist
-        if (!await this.app.vault.adapter.exists(folderPath)) {
-            await this.app.vault.createFolder(folderPath);
-            console.log(`Created folder: ${folderPath}`);
-        }
-
-        let createdCount = 0;
-        let updatedCount = 0;
-
-        for (const workItem of workItems) {
-            try {
-                const fields = workItem.fields;
-                const safeTitle = this.sanitizeFileName(fields['System.Title']);
-                const filename = `WI-${workItem.id} ${safeTitle}.md`;
-                const fullPath = `${folderPath}/${filename}`;
-
-                // Create note content
-                const content = await this.createWorkItemNote(workItem);
-
-                // Check if file already exists
-                if (await this.app.vault.adapter.exists(fullPath)) {
-                    // Update existing file
-                    const existingFile = this.app.vault.getAbstractFileByPath(fullPath);
-                    if (existingFile instanceof TFile) {
-                        await this.app.vault.modify(existingFile, content);
-                        updatedCount++;
-                        console.log(`Updated: ${filename}`);
-                    }
-                } else {
-                    // Create new file
-                    await this.app.vault.create(fullPath, content);
-                    createdCount++;
-                    console.log(`Created: ${filename}`);
-                }
-            } catch (error) {
-                console.error(`Error processing work item ${workItem.id}:`, error);
+        try {
+            const workItems = await this.api.getWorkItems();
+            
+            if (workItems.length === 0) {
+                loadingNotice.hide();
+                new Notice('No work items found in Azure DevOps');
+                return;
             }
-        }
 
-        new Notice(`Pull complete: ${createdCount} created, ${updatedCount} updated`);
-        
-        // NEW: Refresh change detection in tree view if it exists
-        const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
-        if (treeView && typeof treeView.refreshChangeDetection === 'function') {
-            await treeView.refreshChangeDetection();
+            // Update loading message with count
+            loadingNotice.setMessage(`📥 Processing ${workItems.length} work items...`);
+
+            const folderPath = 'Azure DevOps Work Items';
+            
+            // Create folder if it doesn't exist
+            if (!await this.app.vault.adapter.exists(folderPath)) {
+                await this.app.vault.createFolder(folderPath);
+                console.log(`Created folder: ${folderPath}`);
+            }
+
+            let createdCount = 0;
+            let updatedCount = 0;
+            const totalItems = workItems.length;
+
+            for (let index = 0; index < workItems.length; index++) {
+                const workItem = workItems[index];
+                
+                // Update progress every 10 items or on last item
+                if (index % 10 === 0 || index === totalItems - 1) {
+                    const progress = Math.round(((index + 1) / totalItems) * 100);
+                    loadingNotice.setMessage(`📝 Processing work items... ${progress}% (${index + 1}/${totalItems})`);
+                }
+                
+                try {
+                    const fields = workItem.fields;
+                    const safeTitle = this.sanitizeFileName(fields['System.Title']);
+                    const filename = `WI-${workItem.id} ${safeTitle}.md`;
+                    const fullPath = `${folderPath}/${filename}`;
+
+                    // Create note content
+                    const content = await this.createWorkItemNote(workItem);
+
+                    // Check if file already exists
+                    if (await this.app.vault.adapter.exists(fullPath)) {
+                        // Update existing file
+                        const existingFile = this.app.vault.getAbstractFileByPath(fullPath);
+                        if (existingFile instanceof TFile) {
+                            await this.app.vault.modify(existingFile, content);
+                            updatedCount++;
+                            console.log(`Updated: ${filename}`);
+                        }
+                    } else {
+                        // Create new file
+                        await this.app.vault.create(fullPath, content);
+                        createdCount++;
+                        console.log(`Created: ${filename}`);
+                    }
+                } catch (error) {
+                    console.error(`Error processing work item ${workItem.id}:`, error);
+                }
+            }
+
+            // Hide loading and show success
+            loadingNotice.hide();
+            new Notice(`✅ Pull complete: ${createdCount} created, ${updatedCount} updated`);
+            
+            // NEW: Refresh change detection in tree view if it exists
+            const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+            if (treeView && typeof treeView.refreshChangeDetection === 'function') {
+                await treeView.refreshChangeDetection();
+            }
+        } catch (error) {
+            loadingNotice.hide();
+            new Notice(`❌ Pull failed: ${error.message}`);
+            console.error('Pull error:', error);
         }
     }
 
     // Push a specific work item file to Azure DevOps
     async pushSpecificWorkItem(file: TFile): Promise<boolean> {
+        const loadingNotice = new Notice('🔄 Pushing to Azure DevOps...', 0);
+        
         try {
             const content = await this.app.vault.read(file);
             
             // Parse frontmatter to get work item ID
             const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
             if (!frontmatterMatch) {
+                loadingNotice.hide();
                 new Notice('This note doesn\'t have frontmatter. Only work item notes can be pushed.');
                 return false;
             }
@@ -186,16 +214,19 @@ export class WorkItemManager {
             const idMatch = frontmatter.match(/id:\s*(\d+)/);
             
             if (!idMatch) {
+                loadingNotice.hide();
                 new Notice('This note doesn\'t have a work item ID. Only pulled work items can be pushed.');
                 return false;
             }
 
             const workItemId = parseInt(idMatch[1]);
+            loadingNotice.setMessage(`📤 Pushing work item ${workItemId}...`);
 
             // Extract updated values from frontmatter and content
             const updates = this.extractUpdatesFromNote(content, frontmatter);
             
             if (Object.keys(updates).length === 0) {
+                loadingNotice.hide();
                 new Notice('No changes detected to push');
                 return false;
             }
@@ -209,30 +240,37 @@ export class WorkItemManager {
             if (success) {
                 // Update the "Last pushed" timestamp in the note
                 await this.updateNotePushTimestamp(file, content);
-                new Notice(`Work item ${workItemId} pushed successfully`);
+                loadingNotice.hide();
+                new Notice(`✅ Work item ${workItemId} pushed successfully`);
                 
                 // NEW: Refresh change detection in tree view if it exists
                 const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
                 if (treeView && typeof treeView.refreshChangeDetection === 'function') {
                     await treeView.refreshChangeDetection();
                 }
+            } else {
+                loadingNotice.hide();
             }
             
             return success;
         } catch (error) {
-            new Notice(`Error pushing work item: ${error.message}`);
+            loadingNotice.hide();
+            new Notice(`❌ Error pushing work item: ${error.message}`);
             return false;
         }
     }
 
     // Pull a specific work item from Azure DevOps
     async pullSpecificWorkItem(file: TFile): Promise<boolean> {
+        const loadingNotice = new Notice('🔄 Pulling from Azure DevOps...', 0);
+        
         try {
             const content = await this.app.vault.read(file);
             
             // Parse frontmatter to get work item ID
             const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
             if (!frontmatterMatch) {
+                loadingNotice.hide();
                 new Notice('This note doesn\'t have frontmatter. Only work item notes can be pulled.');
                 return false;
             }
@@ -241,16 +279,19 @@ export class WorkItemManager {
             const idMatch = frontmatter.match(/id:\s*(\d+)/);
             
             if (!idMatch) {
+                loadingNotice.hide();
                 new Notice('This note doesn\'t have a work item ID. Only work item notes can be pulled.');
                 return false;
             }
 
             const workItemId = parseInt(idMatch[1]);
+            loadingNotice.setMessage(`📥 Pulling work item ${workItemId}...`);
 
             // Get the specific work item from Azure DevOps
             const workItem = await this.api.getSpecificWorkItem(workItemId);
             
             if (!workItem) {
+                loadingNotice.hide();
                 new Notice(`Failed to fetch work item ${workItemId} from Azure DevOps`);
                 return false;
             }
@@ -259,7 +300,8 @@ export class WorkItemManager {
             const updatedContent = await this.createWorkItemNote(workItem);
             await this.app.vault.modify(file, updatedContent);
             
-            new Notice(`Work item ${workItemId} pulled successfully`);
+            loadingNotice.hide();
+            new Notice(`✅ Work item ${workItemId} pulled successfully`);
             
             // NEW: Update change detection for this specific item only
             const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
@@ -269,7 +311,8 @@ export class WorkItemManager {
             
             return true;
         } catch (error) {
-            new Notice(`Error pulling work item: ${error.message}`);
+            loadingNotice.hide();
+            new Notice(`❌ Error pulling work item: ${error.message}`);
             return false;
         }
     }
@@ -356,8 +399,6 @@ export class WorkItemManager {
         const iterationPath = fields['System.IterationPath'] || '';
 
         // NEW: Extract custom fields
-        console.log('Analyzing work item for custom fields...');
-        const potentialCustomFields = this.debugWorkItemFields(workItem);
         const customFields = this.extractCustomFields(fields);
         const customFieldsYaml = this.formatCustomFieldsForYaml(customFields);
         const customFieldsMarkdown = this.formatCustomFieldsForMarkdown(customFields);
@@ -502,125 +543,32 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
         return content;
     }
 
-    // NEW: Debug method to inspect all fields from a work item
-    debugWorkItemFields(workItem: any) {
-        console.log('=== WORK ITEM FIELD ANALYSIS ===');
-        console.log('Work Item ID:', workItem.id);
-        console.log('Work Item Type:', workItem.fields['System.WorkItemType']);
-        console.log('Total fields:', Object.keys(workItem.fields).length);
-        
-        const systemFields = [];
-        const vstsFields = [];
-        const potentialCustomFields = [];
-        const emptyFields = [];
-        
-        for (const [fieldName, fieldValue] of Object.entries(workItem.fields)) {
-            if (fieldName.startsWith('System.')) {
-                systemFields.push(fieldName);
-            } else if (fieldName.startsWith('Microsoft.VSTS.')) {
-                vstsFields.push(fieldName);
-            } else {
-                if (fieldValue === null || fieldValue === undefined || fieldValue === '') {
-                    emptyFields.push(fieldName);
-                } else {
-                    potentialCustomFields.push({ name: fieldName, value: fieldValue });
-                }
-            }
-        }
-        
-        console.log('\n--- System Fields ---');
-        console.log(systemFields);
-        
-        console.log('\n--- VSTS Fields ---');
-        console.log(vstsFields);
-        
-        console.log('\n--- Potential Custom Fields (with values) ---');
-        potentialCustomFields.forEach(field => {
-            console.log(`${field.name}: ${JSON.stringify(field.value)}`);
-        });
-        
-        console.log('\n--- Empty Fields ---');
-        console.log(emptyFields);
-        
-        console.log('=== END ANALYSIS ===\n');
-        
-        return potentialCustomFields;
-    }
-
-    // NEW: Extract custom fields from Azure DevOps fields
+    // NEW: Extract custom fields from Azure DevOps fields (optimized)
     extractCustomFields(fields: any): { [key: string]: any } {
         const customFields: { [key: string]: any } = {};
         
-        console.log('=== DEBUGGING CUSTOM FIELDS ===');
-        console.log('All fields from Azure DevOps:', Object.keys(fields));
+        // Pre-compiled regex for better performance
+        const wefPattern = /^Wef\s+[0-9a-f]{32}/i;
         
-        // Azure DevOps custom fields can have various patterns
         for (const [fieldName, fieldValue] of Object.entries(fields)) {
-            console.log(`Checking field: ${fieldName} = ${fieldValue}`);
+            // Fast exclusion checks - most common first
+            if (fieldName.startsWith('System.') || 
+                fieldName.startsWith('Microsoft.VSTS.') ||
+                fieldName.startsWith('WEF_') ||
+                fieldName.includes('Kanban Column') ||
+                fieldName.includes('Board Column') ||
+                fieldName.includes('Board Lane') ||
+                fieldName.includes('System.Extensionmarker') ||
+                wefPattern.test(fieldName)) {
+                continue; // Skip system/framework fields
+            }
             
-            // More comprehensive detection of custom fields
-            const isSystemField = fieldName.startsWith('System.');
-            const isVSTSCommonField = fieldName.startsWith('Microsoft.VSTS.Common.');
-            const isVSTSSchedulingField = fieldName.startsWith('Microsoft.VSTS.Scheduling.');
-            const isVSTSTCMField = fieldName.startsWith('Microsoft.VSTS.TCM.');
-            const isVSTSBuildField = fieldName.startsWith('Microsoft.VSTS.Build.');
-            const isVSTSCodeReviewField = fieldName.startsWith('Microsoft.VSTS.CodeReview.');
-            
-            // NEW: Filter out WEF (Work Item Extension Framework) fields and other system extensions
-            const isWEFField = fieldName.startsWith('WEF_') || 
-                              fieldName.includes('System.Extensionmarker') ||
-                              fieldName.includes('Kanban Column') ||
-                              fieldName.includes('Board Column') ||
-                              fieldName.includes('Board Lane') ||
-                              fieldName.match(/^Wef\s+[0-9a-f]{32}/i); // Matches "Wef 188e8f3dabba4f4ca806652d0e870da0" pattern
-            
-            const isInternalField = fieldName === 'System.Id' || 
-                                   fieldName === 'System.Rev' || 
-                                   fieldName === 'System.AuthorizedDate' || 
-                                   fieldName === 'System.RevisedDate' || 
-                                   fieldName === 'System.Watermark' ||
-                                   fieldName === 'System.PersonId' ||
-                                   fieldName === 'System.AuthorizedAs' ||
-                                   fieldName === 'System.CommentCount' ||
-                                   fieldName === 'System.HyperLinkCount' ||
-                                   fieldName === 'System.AttachedFileCount' ||
-                                   fieldName === 'System.NodeName' ||
-                                   fieldName === 'System.AreaLevel1' ||
-                                   fieldName === 'System.AreaLevel2' ||
-                                   fieldName === 'System.AreaLevel3' ||
-                                   fieldName === 'System.AreaLevel4';
-            
-            // Check if this might be a custom field
-            if (!isSystemField && 
-                !isVSTSCommonField && 
-                !isVSTSSchedulingField && 
-                !isVSTSTCMField && 
-                !isVSTSBuildField && 
-                !isVSTSCodeReviewField && 
-                !isWEFField &&
-                !isInternalField) {
-                
-                // This is likely a custom field
-                console.log(`>>> FOUND CUSTOM FIELD: ${fieldName} = ${fieldValue}`);
-                
-                if (fieldValue !== null && fieldValue !== undefined && fieldValue !== '') {
-                    const cleanFieldName = this.cleanCustomFieldName(fieldName);
-                    customFields[cleanFieldName] = fieldValue;
-                    console.log(`>>> ADDED: ${cleanFieldName} = ${fieldValue}`);
-                } else {
-                    console.log(`>>> SKIPPED (empty value): ${fieldName}`);
-                }
-            } else {
-                if (isWEFField) {
-                    console.log(`>>> SKIPPED (WEF/system extension field): ${fieldName}`);
-                } else {
-                    console.log(`>>> SKIPPED (system field): ${fieldName}`);
-                }
+            // Only process non-empty values
+            if (fieldValue !== null && fieldValue !== undefined && fieldValue !== '') {
+                const cleanFieldName = this.cleanCustomFieldName(fieldName);
+                customFields[cleanFieldName] = fieldValue;
             }
         }
-        
-        console.log('Final custom fields:', customFields);
-        console.log('=== END DEBUGGING ===');
         
         return customFields;
     }
@@ -755,12 +703,27 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
             }
         }
 
-        // Extract title from markdown header
-        const titleMatch = content.match(/^# (.+)$/m);
+        // Extract title from markdown header - but only from the main title, not section headers
+        const titleMatch = content.match(/^---\n[\s\S]*?\n---\n\n# (.+)$/m);
         if (titleMatch) {
             const newTitle = titleMatch[1].trim();
-            if (newTitle !== frontmatterData.title?.replace(/^["']|["']$/g, '')) {
+            const frontmatterTitle = frontmatterData.title?.replace(/^["']|["']$/g, '');
+            if (newTitle !== frontmatterTitle) {
                 updates.title = newTitle;
+            }
+        } else {
+            // Fallback: look for the first # header after frontmatter, but make sure it's not a section header
+            const afterFrontmatter = content.replace(/^---\n[\s\S]*?\n---\n/, '');
+            const firstHeaderMatch = afterFrontmatter.match(/^# (.+)$/m);
+            if (firstHeaderMatch) {
+                const potentialTitle = firstHeaderMatch[1].trim();
+                // Skip if this looks like a section header
+                if (!['Details', 'Description', 'Custom Fields', 'Links'].includes(potentialTitle)) {
+                    const frontmatterTitle = frontmatterData.title?.replace(/^["']|["']$/g, '');
+                    if (potentialTitle !== frontmatterTitle) {
+                        updates.title = potentialTitle;
+                    }
+                }
             }
         }
 
@@ -789,7 +752,7 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
             }
         }
 
-        // NEW: Extract custom fields from frontmatter
+        // Extract custom fields from frontmatter
         const customFieldUpdates = this.extractCustomFieldUpdates(frontmatterData);
         if (Object.keys(customFieldUpdates).length > 0) {
             updates.customFields = customFieldUpdates;
@@ -806,14 +769,13 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
                 updates.descriptionFormat = 'Markdown';
             } else {
                 // Convert markdown to HTML for Azure DevOps using Marked
-                // Note: This is now async, but we'll handle it in the calling function
                 updates.description = markdownDescription;
                 updates.descriptionFormat = 'HTML';
                 updates.needsHtmlConversion = true; // Flag for async conversion
             }
         }
 
-        // NEW: Extract custom fields from Custom Fields section
+        // Extract custom fields from Custom Fields section
         const customFieldsMatch = content.match(/## Custom Fields\n\n([\s\S]*?)(?=\n## |---\n\*Last|$)/);
         if (customFieldsMatch) {
             const customFieldsFromMarkdown = this.parseCustomFieldsFromMarkdown(customFieldsMatch[1]);
@@ -837,7 +799,8 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
         ]);
         
         for (const [key, value] of Object.entries(frontmatterData)) {
-            if (!standardFields.has(key) && !key.startsWith('#') && value !== '') {
+            // Skip standard fields, comments (starting with #), and empty values
+            if (!standardFields.has(key) && !key.startsWith('#') && value !== '' && value !== 'null') {
                 // Convert the cleaned field name back to Azure DevOps format if needed
                 const azureFieldName = this.convertToAzureFieldName(key);
                 customFields[azureFieldName] = this.parseFieldValue(value);
@@ -872,18 +835,43 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
 
     // NEW: Convert cleaned field name back to Azure DevOps format
     convertToAzureFieldName(cleanedName: string): string {
-        // This is a best-effort conversion. You might need to maintain a mapping
-        // for more complex scenarios or get the original field names from Azure DevOps
+        // First, check if this might be a known field that was incorrectly processed
+        const knownFieldMappings: { [key: string]: string } = {
+            'title': 'System.Title',
+            'description': 'System.Description',
+            'state': 'System.State',
+            'assignedto': 'System.AssignedTo',
+            'priority': 'Microsoft.VSTS.Common.Priority',
+            'tags': 'System.Tags',
+            'areapath': 'System.AreaPath',
+            'iterationpath': 'System.IterationPath'
+        };
         
-        // For now, assume custom fields follow the pattern Custom.FieldName
-        if (cleanedName.includes('_')) {
-            // Convert snake_case back to proper casing
-            return 'Custom.' + cleanedName.split('_')
-                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-                .join('');
+        const lowerName = cleanedName.toLowerCase();
+        if (knownFieldMappings[lowerName]) {
+            console.warn(`Warning: Field '${cleanedName}' matches system field, but was processed as custom field`);
+            return knownFieldMappings[lowerName];
         }
         
-        return 'Custom.' + cleanedName.charAt(0).toUpperCase() + cleanedName.slice(1);
+        // For actual custom fields, try to reconstruct the original name
+        // This is a best-effort conversion based on common patterns
+        
+        // If it already looks like a proper field name, use it as-is
+        if (cleanedName.includes('.')) {
+            return cleanedName;
+        }
+        
+        // Convert snake_case back to proper casing for Custom fields
+        if (cleanedName.includes('_')) {
+            const words = cleanedName.split('_');
+            const pascalCase = words.map(word => 
+                word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+            ).join('');
+            return `Custom.${pascalCase}`;
+        }
+        
+        // Single word custom field
+        return `Custom.${cleanedName.charAt(0).toUpperCase() + cleanedName.slice(1)}`;
     }
 
     // NEW: Parse field value with appropriate type conversion

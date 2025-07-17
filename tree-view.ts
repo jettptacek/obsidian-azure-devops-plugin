@@ -279,14 +279,6 @@ export class AzureDevOpsTreeView extends ItemView {
         this.updatePushButton(pushChangesBtn);
         pushChangesBtn.addEventListener('click', () => this.pushAllChanges());
 
-        // Instructions
-        const instructions = this.containerEl.createDiv();
-        instructions.style.padding = '8px 10px';
-        instructions.style.backgroundColor = 'var(--background-secondary)';
-        instructions.style.fontSize = '12px';
-        instructions.style.color = 'var(--text-muted)';
-        instructions.innerHTML = '💡 <strong>Drag & Drop:</strong> Drag work items to change parent-child relationships. Edit notes to change content. Click "Push Changes" to sync all changes to Azure DevOps.';
-
         // Tree container
         const treeContainer = this.containerEl.createDiv();
         treeContainer.style.padding = '10px';
