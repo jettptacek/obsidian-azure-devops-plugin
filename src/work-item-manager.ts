@@ -1616,6 +1616,10 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
     // Process inline markdown elements
     private processInlineMarkdown(text: string): string {
         return text
+            // Remove backslash escapes from common characters
+            .replace(/\\(\[|\])/g, '$1')
+            .replace(/\\([*_`])/g, '$1')
+            
             // Bold and italic (order matters)
             .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
@@ -1766,6 +1770,9 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
         
         // First handle explicit <br> tags that might already be in the content
         let processed = cellContent.replace(/<br\s*\/?>/gi, '<br>');
+        
+        // Remove backslash escapes from square brackets
+        processed = processed.replace(/\\(\[|\])/g, '$1');
         
         // Then process inline markdown elements
         processed = this.processInlineMarkdown(processed);
