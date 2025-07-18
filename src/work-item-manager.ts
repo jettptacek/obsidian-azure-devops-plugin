@@ -160,58 +160,94 @@ export class WorkItemManager {
                 
                 const tableRows: string[] = [];
                 let alignments: string[] = [];
+                let numColumns = 0;
                 
-                // Process each row
+                // First pass: determine number of columns and find alignment info
+                rows.forEach((row: any, rowIndex: number) => {
+                    const cells = row.querySelectorAll('th, td');
+                    numColumns = Math.max(numColumns, cells.length);
+                    
+                    // Check alignment from any row, prioritize header but fallback to data
+                    if (alignments.length === 0 || rowIndex === 0) {
+                        const rowAlignments: string[] = [];
+                        cells.forEach((cell: any, cellIndex: number) => {
+                            let alignment = 'left'; // default
+                            
+                            // Check multiple style patterns
+                            const style = cell.getAttribute('style') || '';
+                            const align = cell.getAttribute('align') || '';
+                            
+                            // Check CSS text-align
+                            if (style.match(/text-align\s*:\s*center/i) || align.toLowerCase() === 'center') {
+                                alignment = 'center';
+                            } else if (style.match(/text-align\s*:\s*right/i) || align.toLowerCase() === 'right') {
+                                alignment = 'right';
+                            }
+                            
+                            rowAlignments[cellIndex] = alignment;
+                        });
+                        
+                        // Use this row's alignment if we don't have any or if this is the header
+                        if (alignments.length === 0 || rowIndex === 0) {
+                            alignments = rowAlignments;
+                        }
+                    }
+                });
+                
+                // Ensure alignments array is complete
+                while (alignments.length < numColumns) {
+                    alignments.push('left');
+                }
+                
+                // Second pass: build markdown rows
                 rows.forEach((row: any, rowIndex: number) => {
                     const cells = row.querySelectorAll('th, td');
                     const cellContents: string[] = [];
                     
-                    cells.forEach((cell: any, cellIndex: number) => {
-                        // Extract text content and preserve <br> tags
+                    // Process each cell
+                    for (let cellIndex = 0; cellIndex < numColumns; cellIndex++) {
+                        const cell = cells[cellIndex];
                         let cellContent = '';
                         
-                        // Process child nodes to preserve <br> tags
-                        for (let i = 0; i < cell.childNodes.length; i++) {
-                            const child = cell.childNodes[i];
-                            if (child.nodeType === 3) { // Text node
-                                cellContent += child.textContent;
-                            } else if (child.nodeName === 'BR') {
-                                cellContent += '<br>';
-                            } else {
-                                cellContent += child.textContent || '';
+                        if (cell) {
+                            // Process child nodes to preserve <br> tags and formatting
+                            for (let i = 0; i < cell.childNodes.length; i++) {
+                                const child = cell.childNodes[i];
+                                if (child.nodeType === 3) { // Text node
+                                    cellContent += child.textContent;
+                                } else if (child.nodeName === 'BR') {
+                                    cellContent += '<br>';
+                                } else if (child.nodeType === 1) { // Element node
+                                    const tagName = child.nodeName.toLowerCase();
+                                    if (tagName === 'strong' || tagName === 'b') {
+                                        cellContent += '**' + child.textContent + '**';
+                                    } else if (tagName === 'em' || tagName === 'i') {
+                                        cellContent += '*' + child.textContent + '*';
+                                    } else if (tagName === 'code') {
+                                        cellContent += '`' + child.textContent + '`';
+                                    } else {
+                                        cellContent += child.textContent || '';
+                                    }
+                                }
                             }
                         }
                         
                         cellContents.push(cellContent.trim());
-                        
-                        // Extract alignment from first row (header)
-                        if (rowIndex === 0) {
-                            const style = cell.getAttribute('style') || '';
-                            if (style.includes('text-align: center')) {
-                                alignments[cellIndex] = 'center';
-                            } else if (style.includes('text-align: right')) {
-                                alignments[cellIndex] = 'right';
-                            } else {
-                                alignments[cellIndex] = 'left';
-                            }
-                        }
-                    });
+                    }
                     
                     // Build markdown row
-                    if (cellContents.length > 0) {
-                        tableRows.push('| ' + cellContents.join(' | ') + ' |');
-                        
-                        // Add separator row after header
-                        if (rowIndex === 0) {
-                            const separatorCells = alignments.map(align => {
-                                switch (align) {
-                                    case 'center': return ':---:';
-                                    case 'right': return '---:';
-                                    default: return '---';
-                                }
-                            });
-                            tableRows.push('| ' + separatorCells.join(' | ') + ' |');
-                        }
+                    tableRows.push('| ' + cellContents.join(' | ') + ' |');
+                    
+                    // Add separator row after header (first row)
+                    if (rowIndex === 0) {
+                        const separatorCells = alignments.map(align => {
+                            switch (align) {
+                                case 'center': return ':---:';
+                                case 'right': return '---:';
+                                default: return '---';
+                            }
+                        });
+                        tableRows.push('| ' + separatorCells.join(' | ') + ' |');
                     }
                 });
                 
@@ -1421,17 +1457,18 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
         return result.join('\n');
     }
 
-    // Convert HTML to Markdown when pulling from Azure DevOps using Turndown (improved preservation)
+    // Convert HTML to Markdown when pulling from Azure DevOps using Turndown (preserve table alignment)
     htmlToMarkdown(html: string): string {
         if (!html) return '';
         
         try {
-            // Clean up Azure DevOps HTML before conversion
+            // Clean up Azure DevOps HTML before conversion but preserve alignment info
             const cleanedHtml = html
-                // Remove Azure DevOps specific attributes but preserve structure
+                // Remove Azure DevOps specific attributes but keep style and align for tables
                 .replace(/\s*data-[\w-]+="[^"]*"/g, '')
-                .replace(/\s*style="[^"]*"/g, '')
                 .replace(/\s*class="[^"]*"/g, '')
+                // Only remove style attributes that are NOT on table elements
+                .replace(/(<(?!table|th|td|tr)[^>]+)\s+style="[^"]*"/g, '$1')
                 
                 // Remove empty paragraphs
                 .replace(/<p>\s*<\/p>/g, '')
@@ -1449,6 +1486,9 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
                 
                 // Remove script and style tags
                 .replace(/<(script|style)[^>]*>[\s\S]*?<\/(script|style)>/gi, '');
+            
+            // Debug: log the cleaned HTML to see what alignment info is available
+            console.log('Cleaned HTML for table conversion:', cleanedHtml.substring(0, 500));
             
             // Configure Turndown for better spacing preservation
             this.turndownService.options.blankReplacement = function (content: string, node: any) {
