@@ -15,8 +15,8 @@ interface WorkItemUpdate {
     assignedTo?: string;
     priority?: number;
     tags?: string;
-    customFields?: { [key: string]: any }; // NEW: Support for custom fields
-    needsHtmlConversion?: boolean; // Flag for async HTML conversion
+    customFields?: { [key: string]: any };
+    needsHtmlConversion?: boolean;
 }
 
 interface RelatedWorkItem {
@@ -29,9 +29,11 @@ export class WorkItemManager {
     app: App;
     api: AzureDevOpsAPI;
     settings: AzureDevOpsSettings;
-    plugin: any; // NEW: Reference to main plugin for tree view access
+    plugin: any;
+    
     // Cache for related work item details to avoid repeated API calls
     private relatedItemsCache = new Map<number, RelatedWorkItem>();
+    
     // HTML to Markdown converter
     private turndownService: any;
     
@@ -39,9 +41,13 @@ export class WorkItemManager {
         this.app = app;
         this.api = api;
         this.settings = settings;
-        this.plugin = plugin; // NEW: Store plugin reference
+        this.plugin = plugin;
         
-        // Initialize Turndown service for HTML to Markdown conversion
+        this.initializeTurndownService();
+        this.configureMarkdown();
+    }
+
+    private initializeTurndownService() {
         this.turndownService = new TurndownService({
             headingStyle: 'atx',
             hr: '---',
@@ -54,14 +60,14 @@ export class WorkItemManager {
             linkReferenceStyle: 'full'
         });
         
-        // Configure Turndown service for Azure DevOps specific HTML handling
-        this.configureTurndownService();
+        this.configureTurndownRules();
         
-        // Add GitHub Flavored Markdown support (including tables)
+        // Add GitHub Flavored Markdown support
         const gfm = turndownPluginGfm.gfm;
         this.turndownService.use(gfm);
-        
-        // Configure Marked for Markdown to HTML conversion
+    }
+
+    private configureMarkdown() {
         marked.setOptions({
             gfm: true,
             breaks: false,
@@ -69,18 +75,16 @@ export class WorkItemManager {
         });
     }
 
-    // Configure Turndown service for Azure DevOps specific HTML handling (improved table handling)
-    private configureTurndownService() {
-        // Handle Azure DevOps specific elements with better spacing preservation
+    private configureTurndownRules() {
+        // Azure DevOps specific HTML handling
         this.turndownService.addRule('azureDevOpsDiv', {
             filter: 'div',
             replacement: function (content: string, node: any) {
-                // Preserve spacing around div content
                 return content ? '\n\n' + content + '\n\n' : '';
             }
         });
         
-        // Handle nested lists better with proper spacing
+        // Handle nested lists with proper spacing
         this.turndownService.addRule('nestedLists', {
             filter: ['ul', 'ol'],
             replacement: function (content: string, node: any) {
@@ -92,24 +96,19 @@ export class WorkItemManager {
             }
         });
         
-        // Handle line breaks in Azure DevOps content - preserve intentional breaks including in tables
+        // Handle line breaks in tables and content
         this.turndownService.addRule('lineBreaks', {
             filter: 'br',
             replacement: function (content: string, node: any) {
-                // Check if we're inside a table cell
                 let parent = node.parentNode;
                 while (parent) {
                     if (parent.nodeName === 'TD' || parent.nodeName === 'TH') {
-                        // Inside a table cell - preserve as <br> for proper table formatting
                         return '<br>';
                     }
                     parent = parent.parentNode;
                 }
                 
-                // Outside table - check if this is a meaningful line break
                 const nextSibling = node.nextSibling;
-                
-                // If it's between block elements, convert to double newline
                 if (nextSibling && nextSibling.nodeType === 1 && 
                     ['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'].includes(nextSibling.nodeName)) {
                     return '\n\n';
@@ -119,42 +118,10 @@ export class WorkItemManager {
             }
         });
         
-        // Handle paragraphs with proper spacing
-        this.turndownService.addRule('paragraphs', {
-            filter: 'p',
-            replacement: function (content: string, node: any) {
-                if (!content.trim()) return '';
-                return '\n\n' + content + '\n\n';
-            }
-        });
-        
-        // Handle headers with consistent spacing
-        this.turndownService.addRule('headers', {
-            filter: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'],
-            replacement: function (content: string, node: any) {
-                const level = parseInt(node.nodeName.charAt(1));
-                const prefix = '#'.repeat(level);
-                return '\n\n' + prefix + ' ' + content + '\n\n';
-            }
-        });
-        
-        // Handle code blocks with proper spacing
-        this.turndownService.addRule('codeBlocks', {
-            filter: function (node: any) {
-                return node.nodeName === 'PRE' && node.firstChild && node.firstChild.nodeName === 'CODE';
-            },
-            replacement: function (content: string, node: any) {
-                const code = node.firstChild;
-                const language = code.getAttribute('class')?.replace('language-', '') || '';
-                return '\n\n```' + language + '\n' + code.textContent + '\n```\n\n';
-            }
-        });
-        
-        // Handle Azure DevOps tables with better formatting and alignment preservation
+        // Enhanced table handling with alignment preservation
         this.turndownService.addRule('azureTables', {
             filter: 'table',
             replacement: function (content: string, node: any) {
-                // Extract table structure and rebuild as markdown
                 const rows = node.querySelectorAll('tr');
                 if (rows.length === 0) return content;
                 
@@ -162,62 +129,54 @@ export class WorkItemManager {
                 let alignments: string[] = [];
                 let numColumns = 0;
                 
-                // First pass: determine number of columns and find alignment info
+                // Determine table structure
                 rows.forEach((row: any, rowIndex: number) => {
                     const cells = row.querySelectorAll('th, td');
                     numColumns = Math.max(numColumns, cells.length);
                     
-                    // Check alignment from any row, prioritize header but fallback to data
                     if (alignments.length === 0 || rowIndex === 0) {
                         const rowAlignments: string[] = [];
-                        cells.forEach((cell: any, cellIndex: number) => {
-                            let alignment = 'left'; // default
-                            
-                            // Check multiple style patterns
+                        cells.forEach((cell: any) => {
                             const style = cell.getAttribute('style') || '';
                             const align = cell.getAttribute('align') || '';
                             
-                            // Check CSS text-align
+                            let alignment = 'left';
                             if (style.match(/text-align\s*:\s*center/i) || align.toLowerCase() === 'center') {
                                 alignment = 'center';
                             } else if (style.match(/text-align\s*:\s*right/i) || align.toLowerCase() === 'right') {
                                 alignment = 'right';
                             }
                             
-                            rowAlignments[cellIndex] = alignment;
+                            rowAlignments.push(alignment);
                         });
                         
-                        // Use this row's alignment if we don't have any or if this is the header
                         if (alignments.length === 0 || rowIndex === 0) {
                             alignments = rowAlignments;
                         }
                     }
                 });
                 
-                // Ensure alignments array is complete
                 while (alignments.length < numColumns) {
                     alignments.push('left');
                 }
                 
-                // Second pass: build markdown rows
+                // Build markdown table
                 rows.forEach((row: any, rowIndex: number) => {
                     const cells = row.querySelectorAll('th, td');
                     const cellContents: string[] = [];
                     
-                    // Process each cell
                     for (let cellIndex = 0; cellIndex < numColumns; cellIndex++) {
                         const cell = cells[cellIndex];
                         let cellContent = '';
                         
                         if (cell) {
-                            // Process child nodes to preserve <br> tags and formatting
                             for (let i = 0; i < cell.childNodes.length; i++) {
                                 const child = cell.childNodes[i];
-                                if (child.nodeType === 3) { // Text node
+                                if (child.nodeType === 3) {
                                     cellContent += child.textContent;
                                 } else if (child.nodeName === 'BR') {
                                     cellContent += '<br>';
-                                } else if (child.nodeType === 1) { // Element node
+                                } else if (child.nodeType === 1) {
                                     const tagName = child.nodeName.toLowerCase();
                                     if (tagName === 'strong' || tagName === 'b') {
                                         cellContent += '**' + child.textContent + '**';
@@ -235,10 +194,8 @@ export class WorkItemManager {
                         cellContents.push(cellContent.trim());
                     }
                     
-                    // Build markdown row
                     tableRows.push('| ' + cellContents.join(' | ') + ' |');
                     
-                    // Add separator row after header (first row)
                     if (rowIndex === 0) {
                         const separatorCells = alignments.map(align => {
                             switch (align) {
@@ -254,25 +211,15 @@ export class WorkItemManager {
                 return '\n\n' + tableRows.join('\n') + '\n\n';
             }
         });
-        
-        // Handle blockquotes with proper spacing
-        this.turndownService.addRule('blockquotes', {
-            filter: 'blockquote',
-            replacement: function (content: string) {
-                const quotedContent = content.replace(/\n/g, '\n> ');
-                return '\n\n> ' + quotedContent + '\n\n';
-            }
-        });
     }
 
     updateSettings(settings: AzureDevOpsSettings) {
         this.settings = settings;
     }
 
-    // Pull work items to Obsidian notes
+    // Pull all work items from Azure DevOps
     async pullWorkItems() {
-        // Show loading indicator
-        const loadingNotice = new Notice('🔄 Pulling work items from Azure DevOps...', 0); // 0 = don't auto-hide
+        const loadingNotice = new Notice('🔄 Pulling work items from Azure DevOps...', 0);
         
         try {
             const workItems = await this.api.getWorkItems();
@@ -283,15 +230,11 @@ export class WorkItemManager {
                 return;
             }
 
-            // Update loading message with count
             loadingNotice.setMessage(`📥 Processing ${workItems.length} work items...`);
-
             const folderPath = 'Azure DevOps Work Items';
             
-            // Create folder if it doesn't exist
             if (!await this.app.vault.adapter.exists(folderPath)) {
                 await this.app.vault.createFolder(folderPath);
-                console.log(`Created folder: ${folderPath}`);
             }
 
             let createdCount = 0;
@@ -301,7 +244,6 @@ export class WorkItemManager {
             for (let index = 0; index < workItems.length; index++) {
                 const workItem = workItems[index];
                 
-                // Update progress every 10 items or on last item
                 if (index % 10 === 0 || index === totalItems - 1) {
                     const progress = Math.round(((index + 1) / totalItems) * 100);
                     loadingNotice.setMessage(`📝 Processing work items... ${progress}% (${index + 1}/${totalItems})`);
@@ -313,38 +255,29 @@ export class WorkItemManager {
                     const filename = `WI-${workItem.id} ${safeTitle}.md`;
                     const fullPath = `${folderPath}/${filename}`;
 
-                    // Create note content
                     const content = await this.createWorkItemNote(workItem);
 
-                    // Check if file already exists
                     if (await this.app.vault.adapter.exists(fullPath)) {
-                        // Update existing file
                         const existingFile = this.app.vault.getAbstractFileByPath(fullPath);
                         if (existingFile instanceof TFile) {
                             await this.app.vault.modify(existingFile, content);
                             updatedCount++;
-                            console.log(`Updated: ${filename}`);
                         }
                     } else {
-                        // Create new file
                         await this.app.vault.create(fullPath, content);
                         createdCount++;
-                        console.log(`Created: ${filename}`);
                     }
                 } catch (error) {
                     console.error(`Error processing work item ${workItem.id}:`, error);
                 }
             }
 
-            // Hide loading and show success
             loadingNotice.hide();
             new Notice(`✅ Pull complete: ${createdCount} created, ${updatedCount} updated`);
             
-            // NEW: Refresh change detection in tree view if it exists
-            const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
-            if (treeView && typeof treeView.refreshChangeDetection === 'function') {
-                await treeView.refreshChangeDetection();
-            }
+            // Refresh tree view change detection
+            this.refreshTreeViewChangeDetection();
+            
         } catch (error) {
             loadingNotice.hide();
             new Notice(`❌ Pull failed: ${error.message}`);
@@ -352,15 +285,14 @@ export class WorkItemManager {
         }
     }
 
-    // Push a specific work item file to Azure DevOps
+    // Push a specific work item to Azure DevOps
     async pushSpecificWorkItem(file: TFile): Promise<boolean> {
         const loadingNotice = new Notice('🔄 Pushing to Azure DevOps...', 0);
         
         try {
             const content = await this.app.vault.read(file);
-            
-            // Parse frontmatter to get work item ID
             const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+            
             if (!frontmatterMatch) {
                 loadingNotice.hide();
                 new Notice('This note doesn\'t have frontmatter. Only work item notes can be pushed.');
@@ -379,7 +311,6 @@ export class WorkItemManager {
             const workItemId = parseInt(idMatch[1]);
             loadingNotice.setMessage(`📤 Pushing work item ${workItemId}...`);
 
-            // Extract updated values from frontmatter and content
             const updates = this.extractUpdatesFromNote(content, frontmatter);
             
             if (Object.keys(updates).length === 0) {
@@ -388,23 +319,14 @@ export class WorkItemManager {
                 return false;
             }
 
-            // Process any async HTML conversions needed
             const processedUpdates = await this.processDescriptionUpdates(updates);
-
-            // Push updates to Azure DevOps
             const success = await this.api.updateWorkItem(workItemId, processedUpdates);
             
             if (success) {
-                // Update the "Last pushed" timestamp in the note
                 await this.updateNotePushTimestamp(file, content);
                 loadingNotice.hide();
                 new Notice(`✅ Work item ${workItemId} pushed successfully`);
-                
-                // NEW: Refresh change detection in tree view if it exists
-                const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
-                if (treeView && typeof treeView.refreshChangeDetection === 'function') {
-                    await treeView.refreshChangeDetection();
-                }
+                this.refreshTreeViewChangeDetection();
             } else {
                 loadingNotice.hide();
             }
@@ -423,9 +345,8 @@ export class WorkItemManager {
         
         try {
             const content = await this.app.vault.read(file);
-            
-            // Parse frontmatter to get work item ID
             const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+            
             if (!frontmatterMatch) {
                 loadingNotice.hide();
                 new Notice('This note doesn\'t have frontmatter. Only work item notes can be pulled.');
@@ -444,7 +365,6 @@ export class WorkItemManager {
             const workItemId = parseInt(idMatch[1]);
             loadingNotice.setMessage(`📥 Pulling work item ${workItemId}...`);
 
-            // Get the specific work item from Azure DevOps
             const workItem = await this.api.getSpecificWorkItem(workItemId);
             
             if (!workItem) {
@@ -453,18 +373,14 @@ export class WorkItemManager {
                 return false;
             }
 
-            // Update the note with fresh data from Azure DevOps
             const updatedContent = await this.createWorkItemNote(workItem);
             await this.app.vault.modify(file, updatedContent);
             
             loadingNotice.hide();
             new Notice(`✅ Work item ${workItemId} pulled successfully`);
             
-            // NEW: Update change detection for this specific item only
-            const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
-            if (treeView && typeof treeView.updateSpecificWorkItemChanges === 'function') {
-                await treeView.updateSpecificWorkItemChanges(workItemId, file);
-            }
+            // Update specific work item changes in tree view
+            this.updateSpecificWorkItemChanges(workItemId, file);
             
             return true;
         } catch (error) {
@@ -474,7 +390,7 @@ export class WorkItemManager {
         }
     }
 
-    // Push current work item note to Azure DevOps
+    // Push current active work item
     async pushCurrentWorkItem(): Promise<boolean> {
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile) {
@@ -485,39 +401,14 @@ export class WorkItemManager {
         return await this.pushSpecificWorkItem(activeFile);
     }
 
-    // Fetch related work item details and cache them
-    private async getRelatedWorkItemDetails(relatedId: number): Promise<RelatedWorkItem> {
-        // Check cache first
-        if (this.relatedItemsCache.has(relatedId)) {
-            return this.relatedItemsCache.get(relatedId)!;
+    // Navigate to work item in tree view
+    async navigateToWorkItemInTree(workItemId: number, highlight: boolean = true) {
+        const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+        if (treeView && typeof treeView.scrollToWorkItem === 'function') {
+            await treeView.scrollToWorkItem(workItemId, highlight);
+        } else {
+            new Notice('Azure DevOps Tree view is not open. Please open it first.');
         }
-
-        try {
-            // Fetch from API
-            const workItem = await this.api.getSpecificWorkItem(relatedId);
-            if (workItem && workItem.fields) {
-                const relatedItem: RelatedWorkItem = {
-                    id: relatedId,
-                    title: workItem.fields['System.Title'] || `Work Item ${relatedId}`,
-                    type: workItem.fields['System.WorkItemType'] || 'Unknown'
-                };
-                
-                // Cache the result
-                this.relatedItemsCache.set(relatedId, relatedItem);
-                return relatedItem;
-            }
-        } catch (error) {
-            console.error(`Failed to fetch related work item ${relatedId}:`, error);
-        }
-
-        // Fallback if API call fails
-        const fallback: RelatedWorkItem = {
-            id: relatedId,
-            title: `Work Item ${relatedId}`,
-            type: 'Unknown'
-        };
-        this.relatedItemsCache.set(relatedId, fallback);
-        return fallback;
     }
 
     // Create markdown content for a work item
@@ -525,130 +416,42 @@ export class WorkItemManager {
         const fields = workItem.fields;
         const id = workItem.id;
         
-        // Get field values safely
+        // Extract basic fields
         const title = fields['System.Title'] || 'Untitled';
         const workItemType = fields['System.WorkItemType'] || 'Unknown';
         const state = fields['System.State'] || 'Unknown';
         const assignedTo = fields['System.AssignedTo']?.displayName || 'Unassigned';
         const createdDate = fields['System.CreatedDate'] ? new Date(fields['System.CreatedDate']).toLocaleDateString() : 'Unknown';
         const changedDate = fields['System.ChangedDate'] ? new Date(fields['System.ChangedDate']).toLocaleDateString() : 'Unknown';
-        
-        // Handle description based on the actual format from Azure DevOps
-        let description = 'No description provided';
-        if (fields['System.Description']) {
-            // Check if Azure DevOps indicates this field is in Markdown format
-            const isMarkdownFormat = workItem.fieldFormats && 
-                                   workItem.fieldFormats['System.Description'] && 
-                                   workItem.fieldFormats['System.Description'].format === 'Markdown';
-            
-            if (isMarkdownFormat) {
-                // Content is already in Markdown format
-                description = fields['System.Description'];
-            } else {
-                // Content is in HTML format, convert to Markdown using Turndown
-                description = this.htmlToMarkdown(fields['System.Description']);
-            }
-        }
-        
         const tags = fields['System.Tags'] || '';
         const priority = fields['Microsoft.VSTS.Common.Priority'] || '';
         const areaPath = fields['System.AreaPath'] || '';
         const iterationPath = fields['System.IterationPath'] || '';
 
-        // NEW: Extract custom fields
+        // Handle description with format detection
+        let description = 'No description provided';
+        if (fields['System.Description']) {
+            const isMarkdownFormat = workItem.fieldFormats && 
+                                   workItem.fieldFormats['System.Description'] && 
+                                   workItem.fieldFormats['System.Description'].format === 'Markdown';
+            
+            description = isMarkdownFormat ? 
+                         fields['System.Description'] : 
+                         this.htmlToMarkdown(fields['System.Description']);
+        }
+
+        // Process custom fields
         const customFields = this.extractCustomFields(fields);
         const customFieldsYaml = this.formatCustomFieldsForYaml(customFields);
         const customFieldsMarkdown = this.formatCustomFieldsForMarkdown(customFields);
 
-        // Process relationships to create all types of links
-        const relations = workItem.relations || [];
-        const parentLinks: string[] = [];
-        const childLinks: string[] = [];
-        const relatedLinks: string[] = [];
-        const duplicateLinks: string[] = [];
-        const dependencyLinks: string[] = [];
-        const externalLinks: string[] = [];
-
-        // Collect all related work item IDs first
-        const relatedIds = new Set<number>();
-        for (const relation of relations) {
-            const relatedIdMatch = relation.url.match(/\/(\d+)$/);
-            if (relatedIdMatch) {
-                relatedIds.add(parseInt(relatedIdMatch[1]));
-            }
-        }
-
-        // Batch fetch related work item details
-        const relatedItemPromises = Array.from(relatedIds).map(id => 
-            this.getRelatedWorkItemDetails(id)
-        );
-        await Promise.all(relatedItemPromises);
-
-        // Process all relationships
-        for (const relation of relations) {
-            const comment = relation.attributes?.comment || '';
-            
-            // Handle work item relationships
-            const relatedIdMatch = relation.url.match(/\/(\d+)$/);
-            if (relatedIdMatch) {
-                const relatedId = parseInt(relatedIdMatch[1]);
-                const relatedItem = this.relatedItemsCache.get(relatedId);
-                
-                if (!relatedItem) continue;
-                
-                const sanitizedTitle = this.sanitizeFileName(relatedItem.title);
-                const noteFilename = `WI-${relatedId} ${sanitizedTitle}`;
-                const notePath = `[[${noteFilename}]]`;
-                const azureUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${relatedId}`;
-                const commentText = comment ? ` - *${comment}*` : '';
-                
-                switch (relation.rel) {
-                    case 'System.LinkTypes.Hierarchy-Reverse':
-                        parentLinks.push(`- **Parent:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
-                        break;
-                    case 'System.LinkTypes.Hierarchy-Forward':
-                        childLinks.push(`- **Child:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
-                        break;
-                    case 'System.LinkTypes.Related':
-                        relatedLinks.push(`- **Related:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
-                        break;
-                    case 'System.LinkTypes.Duplicate-Forward':
-                        duplicateLinks.push(`- **Duplicate of:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
-                        break;
-                    case 'System.LinkTypes.Duplicate-Reverse':
-                        duplicateLinks.push(`- **Duplicated by:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
-                        break;
-                    case 'System.LinkTypes.Dependency-Forward':
-                        dependencyLinks.push(`- **Successor:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
-                        break;
-                    case 'System.LinkTypes.Dependency-Reverse':
-                        dependencyLinks.push(`- **Predecessor:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
-                        break;
-                    default:
-                        // Handle other work item relationship types
-                        const relType = this.formatRelationType(relation.rel);
-                        relatedLinks.push(`- **${relType}:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
-                        break;
-                }
-            } else {
-                // Handle external links (hyperlinks, attachments, etc.)
-                const linkUrl = relation.url;
-                const linkComment = relation.attributes?.comment || 'External Link';
-                
-                if (relation.rel === 'Hyperlink') {
-                    externalLinks.push(`- **Link:** [${linkComment}](${linkUrl})`);
-                } else if (relation.rel === 'AttachedFile') {
-                    externalLinks.push(`- **Attachment:** [${linkComment}](${linkUrl})`);
-                } else {
-                    const relType = this.formatRelationType(relation.rel);
-                    externalLinks.push(`- **${relType}:** [${linkComment}](${linkUrl})`);
-                }
-            }
-        }
+        // Process relationships
+        const relationshipSections = await this.processWorkItemRelationships(workItem);
 
         // Create Azure DevOps URL
         const azureUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${id}`;
 
+        // Build the note content
         const content = `---
 id: ${id}
 title: "${title}"
@@ -691,7 +494,7 @@ ${customFieldsMarkdown}
 
 [View in Azure DevOps](${azureUrl})
 
-${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.length > 0 ? '\n' + childLinks.join('\n') : ''}${relatedLinks.length > 0 ? '\n' + relatedLinks.join('\n') : ''}${duplicateLinks.length > 0 ? '\n' + duplicateLinks.join('\n') : ''}${dependencyLinks.length > 0 ? '\n' + dependencyLinks.join('\n') : ''}${externalLinks.length > 0 ? '\n' + externalLinks.join('\n') : ''}${parentLinks.length === 0 && childLinks.length === 0 && relatedLinks.length === 0 && duplicateLinks.length === 0 && dependencyLinks.length === 0 && externalLinks.length === 0 ? '\n\n*No additional links or relationships*' : ''}
+${relationshipSections}
 
 ---
 *Last pulled: ${new Date().toLocaleString()}*
@@ -700,247 +503,228 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
         return content;
     }
 
-    // Extract custom fields from Azure DevOps fields (optimized with better filtering)
-    extractCustomFields(fields: any): { [key: string]: any } {
-        const customFields: { [key: string]: any } = {};
-        
-        // Pre-compiled regex for better performance
-        const wefPattern = /^Wef\s+[0-9a-f]{32}/i;
-        
-        // Known system field prefixes to exclude
-        const systemPrefixes = [
-            'System.',
-            'Microsoft.VSTS.',
-            'Microsoft.TeamFoundation.',
-            'WEF_',
-            'Microsoft.Azure.',
-            'Microsoft.Reporting.',
-            'Microsoft.Build.',
-            'Microsoft.Testing.'
+    // Process work item relationships into organized sections
+    private async processWorkItemRelationships(workItem: any): Promise<string> {
+        const relations = workItem.relations || [];
+        const parentLinks: string[] = [];
+        const childLinks: string[] = [];
+        const relatedLinks: string[] = [];
+        const duplicateLinks: string[] = [];
+        const dependencyLinks: string[] = [];
+        const externalLinks: string[] = [];
+
+        // Collect related work item IDs for batch fetching
+        const relatedIds = new Set<number>();
+        for (const relation of relations) {
+            const relatedIdMatch = relation.url.match(/\/(\d+)$/);
+            if (relatedIdMatch) {
+                relatedIds.add(parseInt(relatedIdMatch[1]));
+            }
+        }
+
+        // Batch fetch related work item details
+        await Promise.all(Array.from(relatedIds).map(id => this.getRelatedWorkItemDetails(id)));
+
+        // Process each relationship
+        for (const relation of relations) {
+            const comment = relation.attributes?.comment || '';
+            const relatedIdMatch = relation.url.match(/\/(\d+)$/);
+            
+            if (relatedIdMatch) {
+                const relatedId = parseInt(relatedIdMatch[1]);
+                const relatedItem = this.relatedItemsCache.get(relatedId);
+                
+                if (relatedItem) {
+                    const sanitizedTitle = this.sanitizeFileName(relatedItem.title);
+                    const noteFilename = `WI-${relatedId} ${sanitizedTitle}`;
+                    const notePath = `[[${noteFilename}]]`;
+                    const azureUrl = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${relatedId}`;
+                    const commentText = comment ? ` - *${comment}*` : '';
+                    
+                    switch (relation.rel) {
+                        case 'System.LinkTypes.Hierarchy-Reverse':
+                            parentLinks.push(`- **Parent:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                            break;
+                        case 'System.LinkTypes.Hierarchy-Forward':
+                            childLinks.push(`- **Child:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                            break;
+                        case 'System.LinkTypes.Related':
+                            relatedLinks.push(`- **Related:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                            break;
+                        case 'System.LinkTypes.Duplicate-Forward':
+                            duplicateLinks.push(`- **Duplicate of:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                            break;
+                        case 'System.LinkTypes.Duplicate-Reverse':
+                            duplicateLinks.push(`- **Duplicated by:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                            break;
+                        case 'System.LinkTypes.Dependency-Forward':
+                            dependencyLinks.push(`- **Successor:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                            break;
+                        case 'System.LinkTypes.Dependency-Reverse':
+                            dependencyLinks.push(`- **Predecessor:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                            break;
+                        default:
+                            const relType = this.formatRelationType(relation.rel);
+                            relatedLinks.push(`- **${relType}:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
+                            break;
+                    }
+                }
+            } else {
+                // Handle external links
+                const linkUrl = relation.url;
+                const linkComment = relation.attributes?.comment || 'External Link';
+                
+                if (relation.rel === 'Hyperlink') {
+                    externalLinks.push(`- **Link:** [${linkComment}](${linkUrl})`);
+                } else if (relation.rel === 'AttachedFile') {
+                    externalLinks.push(`- **Attachment:** [${linkComment}](${linkUrl})`);
+                } else {
+                    const relType = this.formatRelationType(relation.rel);
+                    externalLinks.push(`- **${relType}:** [${linkComment}](${linkUrl})`);
+                }
+            }
+        }
+
+        // Combine all relationship sections
+        const allLinks = [
+            ...parentLinks,
+            ...childLinks, 
+            ...relatedLinks,
+            ...duplicateLinks,
+            ...dependencyLinks,
+            ...externalLinks
         ];
-        
-        // Known system field patterns to exclude
-        const systemPatterns = [
-            /Kanban.*Column/i,
-            /Board.*Column/i,
-            /Board.*Lane/i,
-            /System\.Extensionmarker/i,
-            /\.ProcessedBy/i,
-            /\.IsDeleted/i,
-            /\.NodeName/i,
-            /\.TreePath/i
+
+        return allLinks.length > 0 ? '\n' + allLinks.join('\n') : '\n\n*No additional links or relationships*';
+    }
+
+    // Get related work item details with caching
+    private async getRelatedWorkItemDetails(relatedId: number): Promise<RelatedWorkItem> {
+        if (this.relatedItemsCache.has(relatedId)) {
+            return this.relatedItemsCache.get(relatedId)!;
+        }
+
+        try {
+            const workItem = await this.api.getSpecificWorkItem(relatedId);
+            if (workItem && workItem.fields) {
+                const relatedItem: RelatedWorkItem = {
+                    id: relatedId,
+                    title: workItem.fields['System.Title'] || `Work Item ${relatedId}`,
+                    type: workItem.fields['System.WorkItemType'] || 'Unknown'
+                };
+                
+                this.relatedItemsCache.set(relatedId, relatedItem);
+                return relatedItem;
+            }
+        } catch (error) {
+            console.error(`Failed to fetch related work item ${relatedId}:`, error);
+        }
+
+        // Fallback
+        const fallback: RelatedWorkItem = {
+            id: relatedId,
+            title: `Work Item ${relatedId}`,
+            type: 'Unknown'
+        };
+        this.relatedItemsCache.set(relatedId, fallback);
+        return fallback;
+    }
+
+    // Extract custom fields from work item fields
+    private extractCustomFields(fields: any): { [key: string]: any } {
+        const customFields: { [key: string]: any } = {};
+        const systemPrefixes = [
+            'System.', 'Microsoft.VSTS.', 'Microsoft.TeamFoundation.',
+            'WEF_', 'Microsoft.Azure.', 'Microsoft.Reporting.'
         ];
         
         for (const [fieldName, fieldValue] of Object.entries(fields)) {
-            // Skip null/undefined/empty values
             if (fieldValue === null || fieldValue === undefined || fieldValue === '') {
                 continue;
             }
             
-            // Skip if it's a system field prefix
             if (systemPrefixes.some(prefix => fieldName.startsWith(prefix))) {
                 continue;
             }
             
-            // Skip if it matches system patterns
-            if (systemPatterns.some(pattern => pattern.test(fieldName))) {
-                continue;
-            }
-            
-            // Skip WEF fields
-            if (wefPattern.test(fieldName)) {
-                continue;
-            }
-            
-            // Skip fields that look like HTML or contain suspicious characters
-            if (this.isFieldNameSuspicious(fieldName)) {
-                continue;
-            }
-            
-            // Only include fields that look like legitimate custom fields
             if (this.isLegitimateCustomField(fieldName)) {
-                customFields[fieldName] = fieldValue; // Keep original field name
+                customFields[fieldName] = fieldValue;
             }
         }
         
         return customFields;
     }
 
-    // Check if a field name looks suspicious (contains HTML or invalid characters)
-    private isFieldNameSuspicious(fieldName: string): boolean {
-        // Check for HTML tags or entities
-        if (/<[^>]+>/.test(fieldName) || /&[a-zA-Z0-9#]+;/.test(fieldName)) {
-            return true;
-        }
-        
-        // Check for table-related content
-        if (fieldName.includes('<td>') || fieldName.includes('</td>') || 
-            fieldName.includes('width=') || fieldName.includes('style=')) {
-            return true;
-        }
-        
-        // Check for excessive punctuation or special characters
-        if (/[<>"'&\\\/]{2,}/.test(fieldName)) {
-            return true;
-        }
-        
-        // Check if it's mostly non-alphanumeric characters
-        const alphanumericCount = (fieldName.match(/[a-zA-Z0-9]/g) || []).length;
-        if (alphanumericCount < fieldName.length * 0.5) {
-            return true;
-        }
-        
-        return false;
-    }
-
-    // Check if a field name looks like a legitimate custom field
+    // Check if field name is legitimate custom field
     private isLegitimateCustomField(fieldName: string): boolean {
-        // Must contain at least some letters
-        if (!/[a-zA-Z]/.test(fieldName)) {
-            return false;
-        }
+        if (!/[a-zA-Z]/.test(fieldName)) return false;
         
-        // Should look like a proper field name pattern
-        // Examples: "Custom.MyField", "Company.ProjectField", "MyCustomField"
         const validPatterns = [
-            /^[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*$/, // Namespace.Field
-            /^[A-Za-z][A-Za-z0-9_\s]*$/, // Simple field name
-            /^[A-Za-z][A-Za-z0-9_\-\s\.]*[A-Za-z0-9]$/ // More complex but reasonable
+            /^[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*$/,
+            /^[A-Za-z][A-Za-z0-9_\s]*$/,
+            /^[A-Za-z][A-Za-z0-9_\-\s\.]*[A-Za-z0-9]$/
         ];
         
         return validPatterns.some(pattern => pattern.test(fieldName));
     }
 
-    // Clean up custom field names for YAML and display
-    cleanCustomFieldName(fieldName: string): string {
-        return fieldName
-            .replace(/^(Custom\.|MyCompany\.|Custom_)/i, '') // Remove common prefixes
-            .replace(/[^a-zA-Z0-9_]/g, '_') // Replace special chars with underscore
-            .replace(/_{2,}/g, '_') // Replace multiple underscores with single
-            .replace(/^_|_$/g, '') // Remove leading/trailing underscores
-            .toLowerCase();
-    }
-
-    // Format custom fields for YAML frontmatter (improved)
-    formatCustomFieldsForYaml(customFields: { [key: string]: any }): string {
-        if (Object.keys(customFields).length === 0) {
-            return '';
-        }
+    // Format custom fields for YAML frontmatter
+    private formatCustomFieldsForYaml(customFields: { [key: string]: any }): string {
+        if (Object.keys(customFields).length === 0) return '';
         
         let yaml = '\n# Custom Fields';
         for (const [fieldName, fieldValue] of Object.entries(customFields)) {
-            // Create a safe YAML key from the field name
-            const yamlKey = this.createSafeYamlKey(fieldName);
-            
-            // Handle different value types safely
+            const yamlKey = fieldName.replace(/[^a-zA-Z0-9_\.]/g, '_').toLowerCase();
             const yamlValue = this.formatValueForYaml(fieldValue);
             yaml += `\n${yamlKey}: ${yamlValue}`;
         }
         return yaml;
     }
 
-    // Create a safe YAML key from field name
-    private createSafeYamlKey(fieldName: string): string {
-        // For YAML, we need a clean key but we'll store the original mapping
-        return fieldName
-            .replace(/[^a-zA-Z0-9_\.]/g, '_') // Replace invalid chars with underscore
-            .replace(/_{2,}/g, '_') // Replace multiple underscores with single
-            .replace(/^_|_$/g, '') // Remove leading/trailing underscores
-            .toLowerCase();
-    }
-
-    // Format value safely for YAML
+    // Format value for YAML
     private formatValueForYaml(fieldValue: any): string {
         if (typeof fieldValue === 'string') {
-            // For very long strings or complex HTML, use YAML literal block scalar
             if (fieldValue.length > 200 || fieldValue.includes('<') || fieldValue.includes('\n')) {
-                // Use YAML literal block scalar (|) for complex content
-                const lines = fieldValue.split('\n');
-                if (lines.length > 1 || fieldValue.includes('<')) {
-                    // Multi-line or HTML content - use literal block
-                    return '|\n  ' + fieldValue.replace(/\n/g, '\n  ');
-                }
+                return '|\n  ' + fieldValue.replace(/\n/g, '\n  ');
             }
-            
-            // Regular string - escape quotes and handle basic cases
-            const escaped = fieldValue.replace(/"/g, '\\"').replace(/\n/g, '\\n');
-            return `"${escaped}"`;
-        } else if (typeof fieldValue === 'number') {
-            return String(fieldValue);
-        } else if (typeof fieldValue === 'boolean') {
-            return String(fieldValue);
-        } else if (fieldValue && typeof fieldValue === 'object') {
-            // Handle complex objects (like person fields)
-            if (fieldValue.displayName) {
-                return `"${fieldValue.displayName.replace(/"/g, '\\"')}"`;
-            } else {
-                const jsonStr = JSON.stringify(fieldValue).replace(/"/g, '\\"');
-                return `"${jsonStr}"`;
-            }
-        } else {
-            return `"${String(fieldValue).replace(/"/g, '\\"')}"`;
+            return `"${fieldValue.replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`;
         }
+        
+        if (typeof fieldValue === 'object' && fieldValue?.displayName) {
+            return `"${fieldValue.displayName.replace(/"/g, '\\"')}"`;
+        }
+        
+        return `"${String(fieldValue).replace(/"/g, '\\"')}"`;
     }
 
     // Format custom fields for markdown display
-    formatCustomFieldsForMarkdown(customFields: { [key: string]: any }): string {
-        if (Object.keys(customFields).length === 0) {
-            return '';
-        }
+    private formatCustomFieldsForMarkdown(customFields: { [key: string]: any }): string {
+        if (Object.keys(customFields).length === 0) return '';
         
         let markdown = '\n## Custom Fields\n\n';
         for (const [fieldName, fieldValue] of Object.entries(customFields)) {
-            const displayName = this.formatFieldNameForDisplay(fieldName);
-            let displayValue = '';
-            
-            if (typeof fieldValue === 'object' && fieldValue !== null) {
-                if (fieldValue.displayName) {
-                    displayValue = fieldValue.displayName;
-                } else {
-                    displayValue = JSON.stringify(fieldValue, null, 2);
-                }
-            } else {
-                displayValue = String(fieldValue);
-            }
+            const displayName = fieldName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            const displayValue = typeof fieldValue === 'object' && fieldValue?.displayName ? 
+                               fieldValue.displayName : String(fieldValue);
             
             markdown += `**${displayName}:** ${displayValue}  \n`;
         }
         return markdown;
     }
 
-    // Format field names for display
-    formatFieldNameForDisplay(fieldName: string): string {
-        return fieldName
-            .replace(/_/g, ' ')
-            .replace(/\b\w/g, l => l.toUpperCase());
-    }
-
-    // Helper method to format relation types for display
+    // Format relation type for display
     private formatRelationType(relationType: string): string {
-        // Handle common Azure DevOps relation types
         const typeMap: { [key: string]: string } = {
             'System.LinkTypes.Related': 'Related',
             'System.LinkTypes.Duplicate-Forward': 'Duplicate of',
             'System.LinkTypes.Duplicate-Reverse': 'Duplicated by',
             'System.LinkTypes.Dependency-Forward': 'Successor',
             'System.LinkTypes.Dependency-Reverse': 'Predecessor',
-            'System.LinkTypes.Hierarchy-Forward': 'Child',
-            'System.LinkTypes.Hierarchy-Reverse': 'Parent',
-            'Microsoft.VSTS.TestCase.SharedStepReferencedBy': 'Referenced by Test Case',
-            'Microsoft.VSTS.TestCase.SharedStepReferencedBy-Reverse': 'References Shared Step',
-            'Microsoft.VSTS.Common.TestedBy': 'Tested by',
-            'Microsoft.VSTS.Common.TestedBy-Reverse': 'Tests',
             'Hyperlink': 'Hyperlink',
             'AttachedFile': 'Attachment'
         };
 
-        // Return mapped type or clean up the original
-        if (typeMap[relationType]) {
-            return typeMap[relationType];
-        }
-
-        // Clean up system types
-        return relationType
+        return typeMap[relationType] || relationType
             .replace(/^System\.LinkTypes\./, '')
             .replace(/^Microsoft\.VSTS\./, '')
             .replace(/-Forward$/, ' (Forward)')
@@ -949,17 +733,58 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
             .trim();
     }
 
-    // Clear the cache when settings are updated (in case of different project)
-    clearRelatedItemsCache() {
-        this.relatedItemsCache.clear();
+    // Extract updates from note content
+    private extractUpdatesFromNote(content: string, frontmatter: string): WorkItemUpdate {
+        const updates: WorkItemUpdate = {};
+        const frontmatterData = this.parseFrontmatter(frontmatter);
+
+        // Extract title from markdown header
+        const titleMatch = content.match(/^---\n[\s\S]*?\n---\n\n# (.+)$/m);
+        if (titleMatch) {
+            const newTitle = titleMatch[1].trim();
+            const frontmatterTitle = frontmatterData.title?.replace(/^["']|["']$/g, '');
+            if (newTitle !== frontmatterTitle) {
+                updates.title = newTitle;
+            }
+        }
+
+        // Extract updates from frontmatter
+        if (frontmatterData.state) updates.state = frontmatterData.state;
+        if (frontmatterData.assignedTo && frontmatterData.assignedTo !== 'Unassigned') {
+            updates.assignedTo = frontmatterData.assignedTo;
+        }
+        if (frontmatterData.priority && frontmatterData.priority !== 'null') {
+            const priorityNum = parseInt(frontmatterData.priority);
+            if (!isNaN(priorityNum)) updates.priority = priorityNum;
+        }
+        if (frontmatterData.tags !== undefined) {
+            updates.tags = frontmatterData.tags === 'None' ? '' : frontmatterData.tags;
+        }
+
+        // Extract description from Description section (improved to handle content with --- separators)
+        const descriptionMatch = content.match(/## Description\n\n([\s\S]*?)(?=\n## (?:Custom Fields|Links)|(?:\n---\n\*Last)|$)/);
+        if (descriptionMatch) {
+            let markdownDescription = descriptionMatch[1].trim();
+            
+            // Remove any trailing --- that might be part of the content formatting
+            markdownDescription = markdownDescription.replace(/\n---\s*$/, '').trim();
+            
+            if (this.settings.useMarkdownInAzureDevOps) {
+                updates.description = markdownDescription;
+                updates.descriptionFormat = 'Markdown';
+            } else {
+                updates.description = markdownDescription;
+                updates.descriptionFormat = 'HTML';
+                updates.needsHtmlConversion = true;
+            }
+        }
+
+        return updates;
     }
 
-    // Extract updates from note content and frontmatter
-    extractUpdatesFromNote(content: string, frontmatter: string): WorkItemUpdate {
-        const updates: WorkItemUpdate = {};
-
-        // Parse frontmatter into key-value pairs with better handling of complex values
-        const frontmatterData: { [key: string]: string } = {};
+    // Parse frontmatter into key-value pairs
+    private parseFrontmatter(frontmatter: string): { [key: string]: string } {
+        const data: { [key: string]: string } = {};
         const lines = frontmatter.split('\n');
         
         let currentKey = '';
@@ -967,7 +792,6 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
         let inLiteralBlock = false;
         
         for (const line of lines) {
-            // Handle YAML literal block scalars (|)
             if (line.match(/^([^:]+):\s*\|$/)) {
                 const match = line.match(/^([^:]+):\s*\|$/);
                 if (match) {
@@ -978,28 +802,23 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
                 }
             }
             
-            // If we're in a literal block, collect indented content
             if (inLiteralBlock) {
                 if (line.startsWith('  ')) {
                     currentValue += (currentValue ? '\n' : '') + line.substring(2);
                     continue;
                 } else {
-                    // End of literal block
-                    frontmatterData[currentKey] = currentValue;
+                    data[currentKey] = currentValue;
                     inLiteralBlock = false;
                     currentKey = '';
                     currentValue = '';
-                    // Fall through to process current line normally
                 }
             }
             
-            // Regular key-value parsing
             const colonIndex = line.indexOf(':');
             if (colonIndex > 0) {
                 const key = line.substring(0, colonIndex).trim();
                 let value = line.substring(colonIndex + 1).trim();
                 
-                // Skip if this starts a literal block
                 if (value === '|') {
                     currentKey = key;
                     currentValue = '';
@@ -1007,330 +826,20 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
                     continue;
                 }
                 
-                // Remove quotes if present
                 value = value.replace(/^["']|["']$/g, '');
-                frontmatterData[key] = value;
+                data[key] = value;
             }
         }
         
-        // Handle any remaining literal block
         if (inLiteralBlock && currentKey) {
-            frontmatterData[currentKey] = currentValue;
+            data[currentKey] = currentValue;
         }
-
-        // Extract title from markdown header - but only from the main title, not section headers
-        const titleMatch = content.match(/^---\n[\s\S]*?\n---\n\n# (.+)$/m);
-        if (titleMatch) {
-            const newTitle = titleMatch[1].trim();
-            const frontmatterTitle = frontmatterData.title?.replace(/^["']|["']$/g, '');
-            if (newTitle !== frontmatterTitle) {
-                updates.title = newTitle;
-            }
-        } else {
-            // Fallback: look for the first # header after frontmatter, but make sure it's not a section header
-            const afterFrontmatter = content.replace(/^---\n[\s\S]*?\n---\n/, '');
-            const firstHeaderMatch = afterFrontmatter.match(/^# (.+)$/m);
-            if (firstHeaderMatch) {
-                const potentialTitle = firstHeaderMatch[1].trim();
-                // Skip if this looks like a section header
-                if (!['Details', 'Description', 'Custom Fields', 'Links'].includes(potentialTitle)) {
-                    const frontmatterTitle = frontmatterData.title?.replace(/^["']|["']$/g, '');
-                    if (potentialTitle !== frontmatterTitle) {
-                        updates.title = potentialTitle;
-                    }
-                }
-            }
-        }
-
-        // Extract values from parsed frontmatter
-        if (frontmatterData.state && frontmatterData.state !== '') {
-            updates.state = frontmatterData.state;
-        }
-
-        if (frontmatterData.assignedTo && frontmatterData.assignedTo !== 'Unassigned') {
-            updates.assignedTo = frontmatterData.assignedTo;
-        }
-
-        if (frontmatterData.priority && frontmatterData.priority !== '' && frontmatterData.priority !== 'null') {
-            const priorityNum = parseInt(frontmatterData.priority);
-            if (!isNaN(priorityNum)) {
-                updates.priority = priorityNum;
-            }
-        }
-
-        if (frontmatterData.tags !== undefined) {
-            let tagValue = frontmatterData.tags;
-            if (tagValue && tagValue !== 'None') {
-                updates.tags = tagValue;
-            } else {
-                updates.tags = ''; // Explicitly set empty to clear tags in Azure DevOps
-            }
-        }
-
-        // Extract custom fields from frontmatter
-        const customFieldUpdates = this.extractCustomFieldUpdates(frontmatterData);
-        if (Object.keys(customFieldUpdates).length > 0) {
-            updates.customFields = customFieldUpdates;
-        }
-
-        // Extract description from Description section
-        const descriptionMatch = content.match(/## Description\n\n([\s\S]*?)(?=\n## |---\n\*Last|$)/);
-        if (descriptionMatch) {
-            const markdownDescription = descriptionMatch[1].trim();
-            
-            if (this.settings.useMarkdownInAzureDevOps) {
-                // Use native Markdown - no conversion needed
-                updates.description = markdownDescription;
-                updates.descriptionFormat = 'Markdown';
-            } else {
-                // Convert markdown to HTML for Azure DevOps using Marked
-                updates.description = markdownDescription;
-                updates.descriptionFormat = 'HTML';
-                updates.needsHtmlConversion = true; // Flag for async conversion
-            }
-        }
-
-        // Extract custom fields from Custom Fields section
-        const customFieldsMatch = content.match(/## Custom Fields\n\n([\s\S]*?)(?=\n## |---\n\*Last|$)/);
-        if (customFieldsMatch) {
-            const customFieldsFromMarkdown = this.parseCustomFieldsFromMarkdown(customFieldsMatch[1]);
-            if (Object.keys(customFieldsFromMarkdown).length > 0) {
-                updates.customFields = { ...updates.customFields, ...customFieldsFromMarkdown };
-            }
-        }
-
-        return updates;
+        
+        return data;
     }
 
-    // Extract custom field updates from frontmatter (improved for complex values)
-    extractCustomFieldUpdates(frontmatterData: { [key: string]: string }): { [key: string]: any } {
-        const customFields: { [key: string]: any } = {};
-        
-        // Skip standard fields and look for custom fields
-        const standardFields = new Set([
-            'id', 'title', 'type', 'state', 'assignedto', 'assignedTo', 
-            'createddate', 'createdDate', 'changeddate', 'changedDate',
-            'priority', 'areapath', 'areaPath', 'iterationpath', 'iterationPath', 
-            'tags', 'azureurl', 'azureUrl', 'synced'
-        ]);
-        
-        // Process frontmatter looking for custom fields
-        let currentKey = '';
-        let currentValue = '';
-        let inLiteralBlock = false;
-        
-        const lines = Object.entries(frontmatterData);
-        for (const [key, value] of lines) {
-            const lowerKey = key.toLowerCase();
-            
-            // Skip standard fields, comments (starting with #), and empty values
-            if (standardFields.has(lowerKey) || key.startsWith('#')) {
-                continue;
-            }
-            
-            // Check if this starts a literal block
-            if (value === '|' || value.startsWith('|\n')) {
-                currentKey = key;
-                currentValue = value.startsWith('|\n') ? value.substring(2) : '';
-                inLiteralBlock = true;
-                continue;
-            }
-            
-            // If we're in a literal block, accumulate the value
-            if (inLiteralBlock && key.startsWith('  ')) {
-                currentValue += (currentValue ? '\n' : '') + key.substring(2);
-                continue;
-            }
-            
-            // End of literal block
-            if (inLiteralBlock) {
-                if (currentKey && !this.isFieldNameSuspicious(currentKey)) {
-                    const originalFieldName = this.findOriginalFieldName(currentKey);
-                    if (originalFieldName) {
-                        customFields[originalFieldName] = currentValue;
-                    }
-                }
-                inLiteralBlock = false;
-                currentKey = '';
-                currentValue = '';
-            }
-            
-            // Regular field processing
-            if (value !== '' && value !== 'null' && value !== 'undefined') {
-                // Skip if the key looks suspicious
-                if (this.isFieldNameSuspicious(key)) {
-                    continue;
-                }
-                
-                // For frontmatter fields, we need to map back to the original Azure field name
-                const originalFieldName = this.findOriginalFieldName(key);
-                if (originalFieldName) {
-                    customFields[originalFieldName] = this.parseFieldValue(value);
-                }
-            }
-        }
-        
-        // Handle any remaining literal block
-        if (inLiteralBlock && currentKey) {
-            if (!this.isFieldNameSuspicious(currentKey)) {
-                const originalFieldName = this.findOriginalFieldName(currentKey);
-                if (originalFieldName) {
-                    customFields[originalFieldName] = currentValue;
-                }
-            }
-        }
-        
-        return customFields;
-    }
-
-    // Find original Azure DevOps field name from YAML key
-    private findOriginalFieldName(yamlKey: string): string | null {
-        // This is tricky because we need to reverse the transformation
-        // For now, let's be conservative and only handle fields we can confidently map back
-        
-        // If it already looks like a proper Azure field name, use it
-        if (yamlKey.includes('.') && this.isLegitimateCustomField(yamlKey)) {
-            return yamlKey;
-        }
-        
-        // Try common custom field patterns
-        const commonPrefixes = ['Custom', 'Company', 'Project', 'Team'];
-        for (const prefix of commonPrefixes) {
-            const candidate = `${prefix}.${yamlKey.charAt(0).toUpperCase() + yamlKey.slice(1)}`;
-            if (this.isLegitimateCustomField(candidate)) {
-                return candidate;
-            }
-        }
-        
-        // If we can't confidently map it back, skip it to avoid errors
-        console.warn(`Cannot map YAML key '${yamlKey}' back to Azure DevOps field name`);
-        return null;
-    }
-
-    // Parse custom fields from markdown section (improved)
-    parseCustomFieldsFromMarkdown(markdownContent: string): { [key: string]: any } {
-        const customFields: { [key: string]: any } = {};
-        
-        // Parse lines like "**Field Name:** Field Value"
-        const fieldLines = markdownContent.split('\n').filter(line => line.trim().length > 0);
-        
-        for (const line of fieldLines) {
-            const match = line.match(/\*\*([^*]+):\*\*\s*(.+)/);
-            if (match) {
-                const fieldDisplayName = match[1].trim();
-                const fieldValue = match[2].trim();
-                
-                // Skip if the field name looks suspicious
-                if (this.isFieldNameSuspicious(fieldDisplayName)) {
-                    continue;
-                }
-                
-                // Try to map back to original field name
-                const originalFieldName = this.findOriginalFieldNameFromDisplay(fieldDisplayName);
-                if (originalFieldName) {
-                    customFields[originalFieldName] = this.parseFieldValue(fieldValue);
-                }
-            }
-        }
-        
-        return customFields;
-    }
-
-    // Find original field name from display name
-    private findOriginalFieldNameFromDisplay(displayName: string): string | null {
-        // Convert display name back to field name format
-        const fieldName = displayName.toLowerCase().replace(/\s+/g, '_');
-        
-        // Skip if it looks suspicious
-        if (this.isFieldNameSuspicious(fieldName)) {
-            return null;
-        }
-        
-        return this.findOriginalFieldName(fieldName);
-    }
-
-    // Convert cleaned field name back to Azure DevOps format
-    convertToAzureFieldName(cleanedName: string): string {
-        // First, check if this might be a known field that was incorrectly processed
-        const knownFieldMappings: { [key: string]: string } = {
-            'title': 'System.Title',
-            'description': 'System.Description',
-            'state': 'System.State',
-            'assignedto': 'System.AssignedTo',
-            'priority': 'Microsoft.VSTS.Common.Priority',
-            'tags': 'System.Tags',
-            'areapath': 'System.AreaPath',
-            'iterationpath': 'System.IterationPath'
-        };
-        
-        const lowerName = cleanedName.toLowerCase();
-        if (knownFieldMappings[lowerName]) {
-            console.warn(`Warning: Field '${cleanedName}' matches system field, but was processed as custom field`);
-            return knownFieldMappings[lowerName];
-        }
-        
-        // For actual custom fields, try to reconstruct the original name
-        // This is a best-effort conversion based on common patterns
-        
-        // If it already looks like a proper field name, use it as-is
-        if (cleanedName.includes('.')) {
-            return cleanedName;
-        }
-        
-        // Convert snake_case back to proper casing for Custom fields
-        if (cleanedName.includes('_')) {
-            const words = cleanedName.split('_');
-            const pascalCase = words.map(word => 
-                word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-            ).join('');
-            return `Custom.${pascalCase}`;
-        }
-        
-        // Single word custom field
-        return `Custom.${cleanedName.charAt(0).toUpperCase() + cleanedName.slice(1)}`;
-    }
-
-    // Parse field value with appropriate type conversion (improved for complex values)
-    parseFieldValue(value: string): any {
-        // Handle empty or null values
-        if (!value || value === 'null' || value === 'undefined') {
-            return '';
-        }
-        
-        // For very short values, try type conversion
-        if (value.length < 50) {
-            // Try to parse as number
-            if (/^\d+$/.test(value)) {
-                return parseInt(value);
-            }
-            
-            // Try to parse as decimal
-            if (/^\d+\.\d+$/.test(value)) {
-                return parseFloat(value);
-            }
-            
-            // Try to parse as boolean
-            if (value.toLowerCase() === 'true') {
-                return true;
-            }
-            if (value.toLowerCase() === 'false') {
-                return false;
-            }
-        }
-        
-        // For longer values or complex content, preserve as string
-        // Handle YAML literal block scalars (content that starts with |)
-        if (value.startsWith('|\n')) {
-            // Remove the YAML literal scalar indicator and unindent
-            return value.substring(2).replace(/\n  /g, '\n').trim();
-        }
-        
-        // Return as string, preserving original formatting
-        return value;
-    }
-
-    // New method to handle async HTML conversion
-    async processDescriptionUpdates(updates: WorkItemUpdate): Promise<WorkItemUpdate> {
+    // Process description updates for HTML conversion
+    private async processDescriptionUpdates(updates: WorkItemUpdate): Promise<WorkItemUpdate> {
         if (updates.needsHtmlConversion && updates.description) {
             updates.description = await this.markdownToHtml(updates.description);
             delete updates.needsHtmlConversion;
@@ -1338,46 +847,39 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
         return updates;
     }
 
-    // Update the note with last pushed timestamp
-    async updateNotePushTimestamp(file: TFile, content: string) {
-        const timestamp = new Date().toLocaleString();
+    // Convert HTML to Markdown
+    private htmlToMarkdown(html: string): string {
+        if (!html) return '';
         
-        // Replace any existing "Last pulled" or "Last pushed" line with new "Last pushed"
-        let updatedContent = content
-            .replace(/\*Last pulled: .*\*/g, `*Last pushed: ${timestamp}*`)
-            .replace(/\*Last pushed: .*\*/g, `*Last pushed: ${timestamp}*`);
-
-        // If no timestamp line exists, add it at the end
-        if (updatedContent === content) {
-            // Check if there's already a final separator line
-            if (content.endsWith('---') || content.includes('*Last')) {
-                updatedContent = content.replace(/---\s*$/, '') + `\n\n---\n*Last pushed: ${timestamp}*`;
-            } else {
-                updatedContent = content + `\n\n---\n*Last pushed: ${timestamp}*`;
-            }
+        try {
+            const cleanedHtml = html
+                .replace(/\s*data-[\w-]+="[^"]*"/g, '')
+                .replace(/\s*class="[^"]*"/g, '')
+                .replace(/(<(?!table|th|td|tr)[^>]+)\s+style="[^"]*"/g, '$1')
+                .replace(/<p>\s*<\/p>/g, '')
+                .replace(/<br\s*\/?>/gi, '<br>')
+                .replace(/<(script|style)[^>]*>[\s\S]*?<\/(script|style)>/gi, '');
+            
+            let markdown = this.turndownService.turndown(cleanedHtml);
+            
+            return markdown
+                .replace(/\n\n\n+/g, '\n\n')
+                .replace(/(\n- [^\n]*)\n([^-\s])/g, '$1\n\n$2')
+                .replace(/\n(#{1,6} [^\n]*)\n([^#\n])/g, '\n$1\n\n$2')
+                .replace(/([^\n])\n(#{1,6} [^\n]*)/g, '$1\n\n$2')
+                .trim();
+        } catch (error) {
+            console.error('Error converting HTML to markdown:', error);
+            return this.fallbackHtmlToMarkdown(html);
         }
-
-        await this.app.vault.modify(file, updatedContent);
     }
 
-    // Sanitize filename for file system
-    sanitizeFileName(title: string): string {
-        if (!title) return 'Untitled';
-        
-        // Remove or replace invalid characters
-        return title
-            .replace(/[<>:"/\\|?*]/g, '-')  // Replace invalid chars with dash
-            .replace(/\s+/g, ' ')           // Normalize whitespace
-            .trim()                         // Remove leading/trailing spaces
-            .substring(0, 100);             // Limit length
-    }
-
-    // Convert Markdown to HTML for Azure DevOps using custom table processing
-    async markdownToHtml(markdown: string): Promise<string> {
+    // Convert Markdown to HTML with comprehensive table support
+    private async markdownToHtml(markdown: string): Promise<string> {
         if (!markdown) return '';
         
         try {
-            // First, process tables with our custom handler to ensure proper alignment
+            // First, process tables with custom handler to ensure proper alignment
             let processedMarkdown = this.preProcessTablesForMarked(markdown);
             
             // Configure marked for better spacing preservation
@@ -1442,256 +944,6 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
                 
                 if (nextLine.includes('|') && nextLine.includes('-')) {
                     // This is a markdown table, process it with our custom handler
-                    const tableResult = this.processMarkdownTable(lines, i);
-                    result.push(tableResult.html);
-                    i = tableResult.nextIndex;
-                    continue;
-                }
-            }
-            
-            // Not a table line, add as-is
-            result.push(line);
-            i++;
-        }
-        
-        return result.join('\n');
-    }
-
-    // Convert HTML to Markdown when pulling from Azure DevOps using Turndown (preserve table alignment)
-    htmlToMarkdown(html: string): string {
-        if (!html) return '';
-        
-        try {
-            // Clean up Azure DevOps HTML before conversion but preserve alignment info
-            const cleanedHtml = html
-                // Remove Azure DevOps specific attributes but keep style and align for tables
-                .replace(/\s*data-[\w-]+="[^"]*"/g, '')
-                .replace(/\s*class="[^"]*"/g, '')
-                // Only remove style attributes that are NOT on table elements
-                .replace(/(<(?!table|th|td|tr)[^>]+)\s+style="[^"]*"/g, '$1')
-                
-                // Remove empty paragraphs
-                .replace(/<p>\s*<\/p>/g, '')
-                .replace(/<p><\/p>/g, '')
-                
-                // Fix malformed HTML
-                .replace(/<br\s*\/?>/gi, '<br>')
-                
-                // Preserve intentional spacing in lists
-                .replace(/(<\/li>)\s*(<li>)/g, '$1\n$2')
-                .replace(/(<ul>)\s*(<li>)/g, '$1\n$2')
-                .replace(/(<\/li>)\s*(<\/ul>)/g, '$1\n$2')
-                .replace(/(<ol>)\s*(<li>)/g, '$1\n$2')
-                .replace(/(<\/li>)\s*(<\/ol>)/g, '$1\n$2')
-                
-                // Remove script and style tags
-                .replace(/<(script|style)[^>]*>[\s\S]*?<\/(script|style)>/gi, '');
-            
-            // Debug: log the cleaned HTML to see what alignment info is available
-            console.log('Cleaned HTML for table conversion:', cleanedHtml.substring(0, 500));
-            
-            // Configure Turndown for better spacing preservation
-            this.turndownService.options.blankReplacement = function (content: string, node: any) {
-                return node.isBlock ? '\n\n' : '';
-            };
-            
-            // Convert using Turndown
-            let markdown = this.turndownService.turndown(cleanedHtml);
-            
-            // Post-process the markdown for better formatting and spacing preservation
-            markdown = markdown
-                // Preserve double line breaks for paragraph spacing
-                .replace(/\n\n\n+/g, '\n\n')
-                
-                // Fix list spacing to match original markdown
-                .replace(/(\n- [^\n]*)\n([^-\s])/g, '$1\n\n$2')  // Add spacing after lists
-                .replace(/(\n\d+\. [^\n]*)\n([^0-9\s])/g, '$1\n\n$2')  // Add spacing after numbered lists
-                
-                // Ensure proper spacing around headers
-                .replace(/\n(#{1,6} [^\n]*)\n([^#\n])/g, '\n$1\n\n$2')
-                .replace(/([^\n])\n(#{1,6} [^\n]*)/g, '$1\n\n$2')
-                
-                // Ensure proper spacing around code blocks
-                .replace(/\n```([^`][\s\S]*?)```\n([^\n])/g, '\n```$1```\n\n$2')
-                .replace(/([^\n])\n```([^`][\s\S]*?)```/g, '$1\n\n```$2```')
-                
-                // Fix table spacing
-                .replace(/\n(\|[^\n]*\|)\n([^|\n])/g, '\n$1\n\n$2')
-                .replace(/([^|\n])\n(\|[^\n]*\|)/g, '$1\n\n$2')
-                
-                // Clean up excessive blank lines but preserve intentional double spacing
-                .replace(/\n{4,}/g, '\n\n\n')  // Max 3 line breaks (2 blank lines)
-                
-                // Trim whitespace
-                .trim();
-            
-            return markdown;
-        } catch (error) {
-            console.error('Error converting HTML to markdown:', error);
-            // Fallback to original manual conversion if turndown fails
-            return this.fallbackHtmlToMarkdown(html);
-        }
-    }
-
-    // Fallback manual conversion for Markdown to HTML (improved spacing preservation)
-    private fallbackMarkdownToHtml(markdown: string): string {
-        if (!markdown) return '';
-        
-        let html = markdown;
-        
-        // Handle markdown tables with proper parsing first
-        html = this.convertMarkdownTablesToHtml(html);
-        
-        // Process line by line to preserve spacing
-        const lines = html.split('\n');
-        const processedLines: string[] = [];
-        let inCodeBlock = false;
-        let codeBlockLang = '';
-        
-        for (let i = 0; i < lines.length; i++) {
-            let line = lines[i];
-            
-            // Handle code blocks
-            if (line.startsWith('```')) {
-                if (inCodeBlock) {
-                    processedLines.push('</code></pre>');
-                    inCodeBlock = false;
-                } else {
-                    codeBlockLang = line.substring(3).trim();
-                    processedLines.push(`<pre><code${codeBlockLang ? ` class="language-${codeBlockLang}"` : ''}>`);
-                    inCodeBlock = true;
-                }
-                continue;
-            }
-            
-            if (inCodeBlock) {
-                processedLines.push(line);
-                continue;
-            }
-            
-            // Headers
-            if (line.match(/^#{1,6} /)) {
-                const level = line.match(/^#+/)?.[0].length || 1;
-                const text = line.replace(/^#+\s*/, '').trim();
-                processedLines.push(`<h${level}>${text}</h${level}>`);
-                continue;
-            }
-            
-            // Empty lines - preserve as spacing
-            if (line.trim() === '') {
-                processedLines.push('');
-                continue;
-            }
-            
-            // Lists
-            if (line.match(/^\s*[\*\-\+] /)) {
-                const indent = line.match(/^\s*/)?.[0].length || 0;
-                const content = line.replace(/^\s*[\*\-\+]\s*/, '');
-                const processed = this.processInlineMarkdown(content);
-                
-                // Check if we need to start/end list
-                const prevLine = i > 0 ? lines[i - 1] : '';
-                const nextLine = i < lines.length - 1 ? lines[i + 1] : '';
-                
-                let listItem = `<li>${processed}</li>`;
-                
-                if (!prevLine.match(/^\s*[\*\-\+] /)) {
-                    listItem = '<ul>\n' + listItem;
-                }
-                if (!nextLine.match(/^\s*[\*\-\+] /)) {
-                    listItem = listItem + '\n</ul>';
-                }
-                
-                processedLines.push(listItem);
-                continue;
-            }
-            
-            // Numbered lists
-            if (line.match(/^\s*\d+\. /)) {
-                const content = line.replace(/^\s*\d+\.\s*/, '');
-                const processed = this.processInlineMarkdown(content);
-                
-                const prevLine = i > 0 ? lines[i - 1] : '';
-                const nextLine = i < lines.length - 1 ? lines[i + 1] : '';
-                
-                let listItem = `<li>${processed}</li>`;
-                
-                if (!prevLine.match(/^\s*\d+\. /)) {
-                    listItem = '<ol>\n' + listItem;
-                }
-                if (!nextLine.match(/^\s*\d+\. /)) {
-                    listItem = listItem + '\n</ol>';
-                }
-                
-                processedLines.push(listItem);
-                continue;
-            }
-            
-            // Regular paragraphs
-            if (line.trim() !== '') {
-                const processed = this.processInlineMarkdown(line);
-                
-                // Check if this should be wrapped in <p> tags
-                const prevLine = i > 0 ? lines[i - 1] : '';
-                const nextLine = i < lines.length - 1 ? lines[i + 1] : '';
-                
-                // Don't wrap if it's adjacent to block elements
-                if (prevLine.trim() === '' && nextLine.trim() === '') {
-                    processedLines.push(`<p>${processed}</p>`);
-                } else if (prevLine.trim() === '') {
-                    processedLines.push(`<p>${processed}`);
-                } else if (nextLine.trim() === '') {
-                    processedLines.push(`${processed}</p>`);
-                } else {
-                    processedLines.push(processed);
-                }
-            }
-        }
-        
-        return processedLines.join('\n')
-            .replace(/\n{3,}/g, '\n\n')  // Clean up excessive line breaks
-            .trim();
-    }
-
-    // Process inline markdown elements
-    private processInlineMarkdown(text: string): string {
-        return text
-            // Remove backslash escapes from common characters
-            .replace(/\\(\[|\])/g, '$1')
-            .replace(/\\([*_`])/g, '$1')
-            
-            // Bold and italic (order matters)
-            .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\*(.*?)\*/g, '<em>$1</em>')
-            
-            // Inline code
-            .replace(/`(.*?)`/g, '<code>$1</code>')
-            
-            // Links
-            .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
-            
-            // Images
-            .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2">');
-    }
-
-    // Convert markdown tables to clean HTML tables
-    private convertMarkdownTablesToHtml(markdown: string): string {
-        // Split content into lines for table processing
-        const lines = markdown.split('\n');
-        const result: string[] = [];
-        let i = 0;
-        
-        while (i < lines.length) {
-            const line = lines[i];
-            
-            // Check if this line starts a table (contains pipes and isn't just text)
-            if (line.includes('|') && line.trim().startsWith('|') && line.trim().endsWith('|')) {
-                // Look ahead to see if the next line is a separator (contains dashes)
-                const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
-                
-                if (nextLine.includes('|') && nextLine.includes('-')) {
-                    // This is a markdown table, process it
                     const tableResult = this.processMarkdownTable(lines, i);
                     result.push(tableResult.html);
                     i = tableResult.nextIndex;
@@ -1814,8 +1066,21 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
         // Remove backslash escapes from square brackets
         processed = processed.replace(/\\(\[|\])/g, '$1');
         
-        // Then process inline markdown elements
-        processed = this.processInlineMarkdown(processed);
+        // Process inline markdown elements
+        processed = processed
+            // Bold and italic (order matters)
+            .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            
+            // Inline code
+            .replace(/`(.*?)`/g, '<code>$1</code>')
+            
+            // Links
+            .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+            
+            // Images
+            .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2">');
         
         return processed;
     }
@@ -1861,52 +1126,226 @@ ${parentLinks.length > 0 ? '\n' + parentLinks.join('\n') : ''}${childLinks.lengt
         return alignments;
     }
 
-    // Fallback manual conversion for HTML to Markdown (original method)
-    private fallbackHtmlToMarkdown(html: string): string {
-        if (!html) return '';
+    // Fallback manual conversion for Markdown to HTML (improved with table support)
+    private fallbackMarkdownToHtml(markdown: string): string {
+        if (!markdown) return '';
         
-        return html
-            // Headers
-            .replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1')
-            .replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1')
-            .replace(/<h3[^>]*>(.*?)<\/h3>/gi, '### $1')
-            .replace(/<h4[^>]*>(.*?)<\/h4>/gi, '#### $1')
-            .replace(/<h5[^>]*>(.*?)<\/h5>/gi, '##### $1')
-            .replace(/<h6[^>]*>(.*?)<\/h6>/gi, '###### $1')
+        let html = markdown;
+        
+        // Handle markdown tables with proper parsing first
+        html = this.convertMarkdownTablesToHtml(html);
+        
+        // Process line by line to preserve spacing
+        const lines = html.split('\n');
+        const processedLines: string[] = [];
+        let inCodeBlock = false;
+        let codeBlockLang = '';
+        
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i];
             
-            // Bold and italic
+            // Handle code blocks
+            if (line.startsWith('```')) {
+                if (inCodeBlock) {
+                    processedLines.push('</code></pre>');
+                    inCodeBlock = false;
+                } else {
+                    codeBlockLang = line.substring(3).trim();
+                    processedLines.push(`<pre><code${codeBlockLang ? ` class="language-${codeBlockLang}"` : ''}>`);
+                    inCodeBlock = true;
+                }
+                continue;
+            }
+            
+            if (inCodeBlock) {
+                processedLines.push(line);
+                continue;
+            }
+            
+            // Headers
+            if (line.match(/^#{1,6} /)) {
+                const level = line.match(/^#+/)?.[0].length || 1;
+                const text = line.replace(/^#+\s*/, '').trim();
+                processedLines.push(`<h${level}>${text}</h${level}>`);
+                continue;
+            }
+            
+            // Empty lines - preserve as spacing
+            if (line.trim() === '') {
+                processedLines.push('');
+                continue;
+            }
+            
+            // Lists
+            if (line.match(/^\s*[\*\-\+] /)) {
+                const content = line.replace(/^\s*[\*\-\+]\s*/, '');
+                const processed = this.processInlineMarkdown(content);
+                
+                const prevLine = i > 0 ? lines[i - 1] : '';
+                const nextLine = i < lines.length - 1 ? lines[i + 1] : '';
+                
+                let listItem = `<li>${processed}</li>`;
+                
+                if (!prevLine.match(/^\s*[\*\-\+] /)) {
+                    listItem = '<ul>\n' + listItem;
+                }
+                if (!nextLine.match(/^\s*[\*\-\+] /)) {
+                    listItem = listItem + '\n</ul>';
+                }
+                
+                processedLines.push(listItem);
+                continue;
+            }
+            
+            // Numbered lists
+            if (line.match(/^\s*\d+\. /)) {
+                const content = line.replace(/^\s*\d+\.\s*/, '');
+                const processed = this.processInlineMarkdown(content);
+                
+                const prevLine = i > 0 ? lines[i - 1] : '';
+                const nextLine = i < lines.length - 1 ? lines[i + 1] : '';
+                
+                let listItem = `<li>${processed}</li>`;
+                
+                if (!prevLine.match(/^\s*\d+\. /)) {
+                    listItem = '<ol>\n' + listItem;
+                }
+                if (!nextLine.match(/^\s*\d+\. /)) {
+                    listItem = listItem + '\n</ol>';
+                }
+                
+                processedLines.push(listItem);
+                continue;
+            }
+            
+            // Regular paragraphs
+            if (line.trim() !== '') {
+                const processed = this.processInlineMarkdown(line);
+                
+                const prevLine = i > 0 ? lines[i - 1] : '';
+                const nextLine = i < lines.length - 1 ? lines[i + 1] : '';
+                
+                if (prevLine.trim() === '' && nextLine.trim() === '') {
+                    processedLines.push(`<p>${processed}</p>`);
+                } else if (prevLine.trim() === '') {
+                    processedLines.push(`<p>${processed}`);
+                } else if (nextLine.trim() === '') {
+                    processedLines.push(`${processed}</p>`);
+                } else {
+                    processedLines.push(processed);
+                }
+            }
+        }
+        
+        return processedLines.join('\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+    }
+
+    // Process inline markdown elements
+    private processInlineMarkdown(text: string): string {
+        return text
+            .replace(/\\(\[|\])/g, '$1')
+            .replace(/\\([*_`])/g, '$1')
+            .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/`(.*?)`/g, '<code>$1</code>')
+            .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+            .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2">');
+    }
+
+    // Convert markdown tables to clean HTML tables
+    private convertMarkdownTablesToHtml(markdown: string): string {
+        const lines = markdown.split('\n');
+        const result: string[] = [];
+        let i = 0;
+        
+        while (i < lines.length) {
+            const line = lines[i];
+            
+            if (line.includes('|') && line.trim().startsWith('|') && line.trim().endsWith('|')) {
+                const nextLine = i + 1 < lines.length ? lines[i + 1] : '';
+                
+                if (nextLine.includes('|') && nextLine.includes('-')) {
+                    const tableResult = this.processMarkdownTable(lines, i);
+                    result.push(tableResult.html);
+                    i = tableResult.nextIndex;
+                    continue;
+                }
+            }
+            
+            result.push(line);
+            i++;
+        }
+        
+        return result.join('\n');
+    }
+
+    // Fallback HTML to Markdown conversion
+    private fallbackHtmlToMarkdown(html: string): string {
+        return html
+            .replace(/<h([1-6])[^>]*>(.*?)<\/h[1-6]>/gi, (match, level, text) => '\n'.repeat(parseInt(level)) + '#'.repeat(parseInt(level)) + ' ' + text + '\n\n')
             .replace(/<strong[^>]*>(.*?)<\/strong>/gi, '**$1**')
             .replace(/<b[^>]*>(.*?)<\/b>/gi, '**$1**')
             .replace(/<em[^>]*>(.*?)<\/em>/gi, '*$1*')
             .replace(/<i[^>]*>(.*?)<\/i>/gi, '*$1*')
-            
-            // Code
-            .replace(/<pre[^>]*><code[^>]*>([\s\S]*?)<\/code><\/pre>/gi, '```\n$1\n```')
             .replace(/<code[^>]*>(.*?)<\/code>/gi, '`$1`')
-            
-            // Links
             .replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, '[$2]($1)')
-            
-            // Lists
-            .replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (match, content) => {
-                return content.replace(/<li[^>]*>(.*?)<\/li>/gi, '* $1\n');
-            })
-            .replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (match, content) => {
-                let counter = 1;
-                return content.replace(/<li[^>]*>(.*?)<\/li>/gi, () => `${counter++}. $1\n`);
-            })
-            
-            // Line breaks
             .replace(/<br\s*\/?>/gi, '\n')
-            .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
-            .replace(/<p[^>]*>/gi, '')
-            .replace(/<\/p>/gi, '')
-            
-            // Remove remaining HTML tags
             .replace(/<[^>]*>/gi, '')
-            
-            // Clean up whitespace
             .replace(/\n{3,}/g, '\n\n')
             .trim();
+    }
+
+    // Update note with push timestamp
+    private async updateNotePushTimestamp(file: TFile, content: string) {
+        const timestamp = new Date().toLocaleString();
+        
+        let updatedContent = content
+            .replace(/\*Last pulled: .*\*/g, `*Last pushed: ${timestamp}*`)
+            .replace(/\*Last pushed: .*\*/g, `*Last pushed: ${timestamp}*`);
+
+        if (updatedContent === content) {
+            if (content.endsWith('---') || content.includes('*Last')) {
+                updatedContent = content.replace(/---\s*$/, '') + `\n\n---\n*Last pushed: ${timestamp}*`;
+            } else {
+                updatedContent = content + `\n\n---\n*Last pushed: ${timestamp}*`;
+            }
+        }
+
+        await this.app.vault.modify(file, updatedContent);
+    }
+
+    // Refresh tree view change detection
+    private refreshTreeViewChangeDetection() {
+        const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+        if (treeView && typeof treeView.refreshChangeDetection === 'function') {
+            treeView.refreshChangeDetection();
+        }
+    }
+
+    // Update specific work item changes in tree view
+    private updateSpecificWorkItemChanges(workItemId: number, file: TFile) {
+        const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+        if (treeView && typeof treeView.updateSpecificWorkItemChanges === 'function') {
+            treeView.updateSpecificWorkItemChanges(workItemId, file);
+        }
+    }
+
+    // Clear related items cache
+    clearRelatedItemsCache() {
+        this.relatedItemsCache.clear();
+    }
+
+    // Sanitize filename for file system
+    sanitizeFileName(title: string): string {
+        if (!title) return 'Untitled';
+        
+        return title
+            .replace(/[<>:"/\\|?*]/g, '-')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .substring(0, 100);
     }
 }

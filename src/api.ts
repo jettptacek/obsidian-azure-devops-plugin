@@ -37,13 +37,18 @@ export class AzureDevOpsAPI {
         return true;
     }
 
-    // Create Azure DevOps work item
-    async createWorkItem(workItem: WorkItem): Promise<any> {
+    // UPDATED: Enhanced work item creation method
+    async createWorkItem(workItemData: any): Promise<any> {
         if (!this.validateSettings()) return null;
 
-        console.log('Creating work item:', workItem);
+        console.log('Creating work item:', workItemData);
 
-        const workItemTypeEncoded = encodeURIComponent(workItem.workItemType);
+        // Support both old WorkItem interface and new enhanced data structure
+        const workItemType = workItemData.workItemType || workItemData.type;
+        const title = workItemData.title;
+        const description = workItemData.description || '';
+
+        const workItemTypeEncoded = encodeURIComponent(workItemType);
         const projectEncoded = encodeURIComponent(this.settings.project);
         const url = `https://dev.azure.com/${this.settings.organization}/${projectEncoded}/_apis/wit/workitems/$${workItemTypeEncoded}?api-version=7.0`;
 
@@ -51,14 +56,85 @@ export class AzureDevOpsAPI {
             {
                 op: 'add',
                 path: '/fields/System.Title',
-                value: workItem.title
-            },
-            {
-                op: 'add',
-                path: '/fields/System.Description',
-                value: workItem.description
+                value: title
             }
         ];
+
+        // Add description if provided
+        if (description && description.trim() !== '') {
+            requestBody.push({
+                op: 'add',
+                path: '/fields/System.Description',
+                value: description
+            });
+        }
+
+        // Add state if provided
+        if (workItemData.state) {
+            requestBody.push({
+                op: 'add',
+                path: '/fields/System.State',
+                value: workItemData.state
+            });
+        }
+
+        // Add assigned to if provided
+        if (workItemData.assignedTo) {
+            requestBody.push({
+                op: 'add',
+                path: '/fields/System.AssignedTo',
+                value: workItemData.assignedTo
+            });
+        }
+
+        // Add priority if provided
+        if (workItemData.priority) {
+            requestBody.push({
+                op: 'add',
+                path: '/fields/Microsoft.VSTS.Common.Priority',
+                value: workItemData.priority.toString()
+            });
+        }
+
+        // Add tags if provided
+        if (workItemData.tags) {
+            requestBody.push({
+                op: 'add',
+                path: '/fields/System.Tags',
+                value: workItemData.tags
+            });
+        }
+
+        // Add area path if provided
+        if (workItemData.areaPath) {
+            requestBody.push({
+                op: 'add',
+                path: '/fields/System.AreaPath',
+                value: workItemData.areaPath
+            });
+        }
+
+        // Add iteration path if provided
+        if (workItemData.iterationPath) {
+            requestBody.push({
+                op: 'add',
+                path: '/fields/System.IterationPath',
+                value: workItemData.iterationPath
+            });
+        }
+
+        // Add custom fields if provided
+        if (workItemData.customFields) {
+            for (const [fieldName, fieldValue] of Object.entries(workItemData.customFields)) {
+                if (fieldValue !== null && fieldValue !== undefined && fieldValue !== '') {
+                    requestBody.push({
+                        op: 'add',
+                        path: `/fields/${fieldName}`,
+                        value: fieldValue
+                    });
+                }
+            }
+        }
 
         try {
             const response = await requestUrl({
@@ -84,6 +160,113 @@ export class AzureDevOpsAPI {
         } catch (error) {
             console.error('Request failed:', error);
             new Notice(`Request failed: ${error.message}`);
+            return null;
+        }
+    }
+
+    // UPDATED: Enhanced getWorkItemTypes method with better filtering
+    async getWorkItemTypes(): Promise<any[]> {
+        if (!this.validateSettings()) return [];
+
+        const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/workitemtypes?api-version=7.0`;
+
+        try {
+            const response = await requestUrl({
+                url: url,
+                method: 'GET',
+                headers: {
+                    'Authorization': `Basic ${btoa(':' + this.settings.personalAccessToken)}`
+                },
+                throw: false
+            });
+
+            if (response.status >= 200 && response.status < 300) {
+                const workItemTypes = response.json.value || [];
+                
+                // Filter out types that shouldn't be created manually
+                return workItemTypes.filter((type: any) => {
+                    // Filter out disabled types
+                    if (type.isDisabled) return false;
+                    
+                    // Filter out system/internal types that users shouldn't create
+                    const excludedTypes = [
+                        'Test Suite',
+                        'Test Plan', 
+                        'Shared Steps',
+                        'Code Review Request',
+                        'Code Review Response',
+                        'Feedback Request',
+                        'Feedback Response',
+                        'Test Result',
+                        'Test Run'
+                    ];
+                    
+                    return !excludedTypes.some(excluded => 
+                        type.name.toLowerCase().includes(excluded.toLowerCase())
+                    );
+                });
+            } else {
+                console.error('Failed to fetch work item types:', response.status, response.text);
+                return [];
+            }
+        } catch (error) {
+            console.error('Error fetching work item types:', error);
+            return [];
+        }
+    }
+
+    // NEW: Validate work item creation data
+    validateWorkItemData(workItemData: any): { isValid: boolean; errors: string[] } {
+        const errors: string[] = [];
+        
+        if (!workItemData.title || workItemData.title.trim() === '') {
+            errors.push('Title is required');
+        }
+        
+        if (!workItemData.workItemType || workItemData.workItemType.trim() === '') {
+            errors.push('Work item type is required');
+        }
+        
+        // Check title length (Azure DevOps has a limit)
+        if (workItemData.title && workItemData.title.length > 255) {
+            errors.push('Title must be 255 characters or less');
+        }
+        
+        // Check description length if provided
+        if (workItemData.description && workItemData.description.length > 32000) {
+            errors.push('Description must be 32,000 characters or less');
+        }
+        
+        return {
+            isValid: errors.length === 0,
+            errors
+        };
+    }
+
+    // NEW: Get work item type details including available fields
+    async getWorkItemTypeDetails(typeName: string): Promise<any> {
+        if (!this.validateSettings()) return null;
+
+        const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/workitemtypes/${encodeURIComponent(typeName)}?api-version=7.0`;
+        
+        try {
+            const response = await requestUrl({
+                url: url,
+                method: 'GET',
+                headers: {
+                    'Authorization': `Basic ${btoa(':' + this.settings.personalAccessToken)}`
+                },
+                throw: false
+            });
+
+            if (response.status >= 200 && response.status < 300) {
+                return response.json;
+            } else {
+                console.error(`Failed to get work item type details for ${typeName}:`, response.status, response.text);
+                return null;
+            }
+        } catch (error) {
+            console.error(`Error getting work item type details for ${typeName}:`, error);
             return null;
         }
     }
@@ -330,7 +513,7 @@ export class AzureDevOpsAPI {
             }
         }
 
-        // NEW: Handle custom fields
+        // Handle custom fields
         if (updates.customFields) {
             for (const [fieldName, fieldValue] of Object.entries(updates.customFields)) {
                 if (fieldValue === null || fieldValue === undefined || fieldValue === '') {
@@ -380,7 +563,7 @@ export class AzureDevOpsAPI {
         }
     }
 
-    // NEW: Get all field definitions for the project (useful for custom field discovery)
+    // Get all field definitions for the project (useful for custom field discovery)
     async getWorkItemFields(): Promise<any[]> {
         if (!this.validateSettings()) return [];
 
@@ -408,7 +591,7 @@ export class AzureDevOpsAPI {
         }
     }
 
-    // NEW: Get field definitions for a specific work item type
+    // Get field definitions for a specific work item type
     async getWorkItemTypeFields(workItemType: string): Promise<any[]> {
         if (!this.validateSettings()) return [];
 
@@ -436,7 +619,7 @@ export class AzureDevOpsAPI {
         }
     }
 
-    // NEW: Validate custom field before updating
+    // Validate custom field before updating
     async validateCustomField(fieldName: string, fieldValue: any, workItemType?: string): Promise<boolean> {
         if (!this.validateSettings()) return false;
 
@@ -475,7 +658,7 @@ export class AzureDevOpsAPI {
         }
     }
 
-    // NEW: Get custom field definitions (non-system fields)
+    // Get custom field definitions (non-system fields)
     async getCustomFields(): Promise<any[]> {
         if (!this.validateSettings()) return [];
 
@@ -648,34 +831,6 @@ export class AzureDevOpsAPI {
         } catch (error) {
             new Notice(`Error removing parent relationship: ${error.message}`);
             return false;
-        }
-    }
-
-    // Get work item type definitions with icons
-    async getWorkItemTypes(): Promise<any[]> {
-        if (!this.validateSettings()) return [];
-
-        const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/workitemtypes?api-version=7.0`;
-
-        try {
-            const response = await requestUrl({
-                url: url,
-                method: 'GET',
-                headers: {
-                    'Authorization': `Basic ${btoa(':' + this.settings.personalAccessToken)}`
-                },
-                throw: false
-            });
-
-            if (response.status >= 200 && response.status < 300) {
-                return response.json.value || [];
-            } else {
-                console.error('Failed to fetch work item types:', response.status, response.text);
-                return [];
-            }
-        } catch (error) {
-            console.error('Error fetching work item types:', error);
-            return [];
         }
     }
 

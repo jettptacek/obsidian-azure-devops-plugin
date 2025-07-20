@@ -1,4 +1,4 @@
-import { Plugin, Notice, WorkspaceLeaf } from 'obsidian';
+import { Plugin, Notice, WorkspaceLeaf, TFile } from 'obsidian';
 import { AzureDevOpsSettings, DEFAULT_SETTINGS } from './settings';
 import { AzureDevOpsTreeView, VIEW_TYPE_AZURE_DEVOPS_TREE } from './tree-view';
 import { WorkItemModal } from './modals';
@@ -28,7 +28,11 @@ export default class AzureDevOpsPlugin extends Plugin {
         );
 
         // Add ribbon icons
-        this.addRibbonIcon('external-link', 'Azure DevOps', () => {
+        this.addRibbonIcon('create-new', 'Create Azure DevOps Work Item', () => {
+            if (!this.settings.organization || !this.settings.project || !this.settings.personalAccessToken) {
+                new Notice('❌ Please configure Azure DevOps settings first');
+                return;
+            }
             new WorkItemModal(this.app, this).open();
         });
 
@@ -37,6 +41,18 @@ export default class AzureDevOpsPlugin extends Plugin {
         });
 
         // Add commands
+        this.addCommand({
+            id: 'create-azure-devops-work-item',
+            name: 'Create Azure DevOps Work Item',
+            callback: () => {
+                if (!this.settings.organization || !this.settings.project || !this.settings.personalAccessToken) {
+                    new Notice('❌ Please configure Azure DevOps settings first');
+                    return;
+                }
+                new WorkItemModal(this.app, this).open();
+            }
+        });
+
         this.addCommand({
             id: 'open-azure-devops-tree',
             name: 'Open Azure DevOps Tree View',
@@ -116,13 +132,72 @@ export default class AzureDevOpsPlugin extends Plugin {
         }
     }
 
-    // Create Azure DevOps work item
-    async createWorkItem(workItem: { title: string; description: string; workItemType: string; }): Promise<any> {
-        const result = await this.api.createWorkItem(workItem);
-        if (result) {
-            this.refreshTreeView();
+    // ENHANCED: Create Azure DevOps work item with better integration
+    async createWorkItem(workItem: any): Promise<any> {
+        try {
+            // Validate the work item data
+            const validation = this.api.validateWorkItemData(workItem);
+            if (!validation.isValid) {
+                new Notice(`❌ Validation failed: ${validation.errors.join(', ')}`);
+                return { success: false, errors: validation.errors };
+            }
+
+            // Create the work item in Azure DevOps
+            const result = await this.api.createWorkItem(workItem);
+            
+            if (result) {
+                // Always create a note for the new work item
+                await this.createNoteForWorkItem(result);
+                
+                // Refresh the tree view to show the new work item
+                this.refreshTreeView();
+                
+                // Navigate to the new work item in tree view if possible
+                if (result.id && this.workItemManager) {
+                    setTimeout(() => {
+                        this.workItemManager.navigateToWorkItemInTree(result.id);
+                    }, 1000); // Small delay to allow for tree refresh
+                }
+                
+                return {
+                    id: result.id,
+                    url: `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_workitems/edit/${result.id}`,
+                    success: true
+                };
+            }
+            
+            return { success: false, error: 'Failed to create work item' };
+            
+        } catch (error) {
+            console.error('Error creating work item:', error);
+            return { 
+                success: false, 
+                error: error.message || 'Unknown error occurred'
+            };
         }
-        return result;
+    }
+
+    // NEW: Create note for newly created work item
+    async createNoteForWorkItem(workItem: any): Promise<void> {
+        try {
+            const noteContent = await this.workItemManager.createWorkItemNote(workItem);
+            const safeTitle = this.workItemManager.sanitizeFileName(workItem.fields['System.Title']);
+            const filename = `WI-${workItem.id} ${safeTitle}.md`;
+            const folderPath = 'Azure DevOps Work Items';
+            const fullPath = `${folderPath}/${filename}`;
+
+            // Ensure folder exists
+            if (!await this.app.vault.adapter.exists(folderPath)) {
+                await this.app.vault.createFolder(folderPath);
+            }
+
+            // Create the note
+            await this.app.vault.create(fullPath, noteContent);
+            console.log(`Created note for new work item: ${filename}`);
+        } catch (error) {
+            console.error('Error creating note for work item:', error);
+            // Don't throw error here - note creation failure shouldn't fail work item creation
+        }
     }
 
     // Refresh tree view if it's open
@@ -142,7 +217,7 @@ export default class AzureDevOpsPlugin extends Plugin {
         return this.api.getWorkItemsWithRelations();
     }
 
-    async pushSpecificWorkItem(file: any) {
+    async pushSpecificWorkItem(file: TFile) {
         const result = await this.workItemManager.pushSpecificWorkItem(file);
         if (result) {
             this.refreshTreeView();
@@ -150,7 +225,7 @@ export default class AzureDevOpsPlugin extends Plugin {
         return result;
     }
 
-    async pullSpecificWorkItem(file: any) {
+    async pullSpecificWorkItem(file: TFile) {
         const result = await this.workItemManager.pullSpecificWorkItem(file);
         if (result) {
             this.refreshTreeView();

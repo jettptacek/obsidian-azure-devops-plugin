@@ -1,4 +1,4 @@
-import { WorkspaceLeaf, ItemView, Menu, TFile, Notice } from 'obsidian';
+import { WorkspaceLeaf, ItemView, Menu, TFile, Notice, FileView } from 'obsidian';
 import { WorkItemNode, WorkItemRelation } from './settings';
 
 export const VIEW_TYPE_AZURE_DEVOPS_TREE = 'azure-devops-tree-view';
@@ -27,6 +27,9 @@ export class AzureDevOpsTreeView extends ItemView {
     private originalNoteContent: Map<number, string> = new Map();
     private changedNotes: Set<number> = new Set();
     private fileWatcher: any = null;
+
+    // NEW: Auto-scroll and navigation properties
+    private activeFileWatcher: any = null;
 
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
@@ -134,6 +137,231 @@ export class AzureDevOpsTreeView extends ItemView {
 
     getIcon(): string {
         return 'git-branch';
+    }
+
+    // NEW: Add this method to handle active file changes
+    startActiveFileWatcher() {
+        if (this.activeFileWatcher) {
+            this.app.workspace.offref(this.activeFileWatcher);
+        }
+        
+        // Watch for active file changes
+        this.activeFileWatcher = this.app.workspace.on('active-leaf-change', (leaf) => {
+            if (leaf && leaf.view instanceof FileView && leaf.view.file) {
+                this.handleActiveFileChange(leaf.view.file);
+            }
+        });
+        
+        // Also watch for file-open events
+        this.app.workspace.on('file-open', (file) => {
+            if (file) {
+                this.handleActiveFileChange(file);
+            }
+        });
+        
+        // Watch for when files are opened via clicking in file explorer, command palette, etc.
+        this.registerEvent(
+            this.app.workspace.on('file-open', (file) => {
+                if (file) {
+                    // Small delay to ensure the file is fully loaded
+                    setTimeout(() => {
+                        this.handleActiveFileChange(file);
+                    }, 100);
+                }
+            })
+        );
+    }
+
+    // NEW: Handle when a file becomes active
+    async handleActiveFileChange(file: TFile) {
+        // Check if this is a work item file
+        if (!file.path.startsWith('Azure DevOps Work Items/') || !file.path.endsWith('.md')) {
+            return;
+        }
+        
+        // Extract work item ID from filename
+        const match = file.name.match(/^WI-(\d+)/);
+        if (!match) {
+            return;
+        }
+        
+        const workItemId = parseInt(match[1]);
+        
+        // Find and scroll to this work item in the tree
+        await this.scrollToWorkItem(workItemId);
+    }
+
+    // NEW: Scroll to a specific work item in the tree
+    async scrollToWorkItem(workItemId: number, highlightItem: boolean = true) {
+        // Find the node in our tree
+        const node = this.allNodes.get(workItemId);
+        if (!node) {
+            console.log(`Work item ${workItemId} not found in tree`);
+            return;
+        }
+        
+        // Expand all parent nodes to make this node visible
+        await this.expandPathToNode(node);
+        
+        // Wait a bit for the DOM to update
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Find the DOM element for this node
+        const nodeElement = this.nodeElements.get(workItemId);
+        if (!nodeElement) {
+            console.log(`DOM element for work item ${workItemId} not found`);
+            return;
+        }
+        
+        // Scroll the element into view with optional highlighting
+        this.scrollElementIntoView(nodeElement, highlightItem);
+    }
+
+    // NEW: Expand all parent nodes to make the target node visible
+    async expandPathToNode(targetNode: WorkItemNode) {
+        const pathToRoot: WorkItemNode[] = [];
+        let currentNode: WorkItemNode | undefined = targetNode;
+        
+        // Build path from target to root
+        while (currentNode) {
+            pathToRoot.unshift(currentNode);
+            currentNode = currentNode.parent;
+        }
+        
+        // Expand all parent nodes in the path (excluding the target itself)
+        for (let i = 0; i < pathToRoot.length - 1; i++) {
+            const nodeToExpand = pathToRoot[i];
+            
+            if (nodeToExpand.children.length > 0 && !this.expandedNodes.has(nodeToExpand.id)) {
+                this.expandedNodes.add(nodeToExpand.id);
+                
+                // Find and update the expand button
+                const nodeElement = this.nodeElements.get(nodeToExpand.id);
+                if (nodeElement) {
+                    const expandBtn = nodeElement.querySelector('span');
+                    if (expandBtn && nodeToExpand.children.length > 0) {
+                        expandBtn.textContent = '▼';
+                    }
+                }
+                
+                // Render children if not already rendered
+                const childrenContainer = this.virtualScrollContainer?.querySelector(
+                    `.children-container[data-node-id="${nodeToExpand.id}"]`
+                ) as HTMLElement;
+                
+                if (childrenContainer) {
+                    if (childrenContainer.children.length === 0 && nodeToExpand.children.length > 0) {
+                        this.renderTreeOptimized(childrenContainer, nodeToExpand.children, this.getNodeLevel(nodeToExpand) + 1);
+                    }
+                    childrenContainer.style.display = 'block';
+                }
+            }
+        }
+        
+        // Update toggle button state
+        const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
+        if (toggleBtn) {
+            this.updateToggleButton(toggleBtn);
+        }
+    }
+
+    // NEW: Scroll element into view with optional highlighting
+    scrollElementIntoView(element: HTMLElement, highlightOnScroll: boolean = false) {
+        const treeContainer = this.virtualScrollContainer;
+        if (!treeContainer) {
+            return;
+        }
+        
+        // Get element and container positions
+        const elementRect = element.getBoundingClientRect();
+        const containerRect = treeContainer.getBoundingClientRect();
+        
+        // Check if element is already visible
+        const isElementVisible = (
+            elementRect.top >= containerRect.top &&
+            elementRect.bottom <= containerRect.bottom
+        );
+        
+        if (!isElementVisible) {
+            // Calculate scroll position to center the element
+            const elementTop = element.offsetTop;
+            const containerHeight = treeContainer.clientHeight;
+            const elementHeight = element.offsetHeight;
+            
+            const scrollTop = elementTop - (containerHeight / 2) + (elementHeight / 2);
+            
+            // Smooth scroll to the element
+            treeContainer.scrollTo({
+                top: Math.max(0, scrollTop),
+                behavior: 'smooth'
+            });
+        }
+        
+        // Add highlighting if requested
+        if (highlightOnScroll) {
+            this.highlightElement(element);
+        }
+    }
+
+    // NEW: Highlight an element temporarily to draw attention
+    highlightElement(element: HTMLElement) {
+        // Add highlighting CSS if not already added
+        if (!document.querySelector('#tree-highlight-styles')) {
+            const style = document.createElement('style');
+            style.id = 'tree-highlight-styles';
+            style.textContent = `
+                .azure-tree-row.active-file-highlight {
+                    background-color: var(--interactive-accent) !important;
+                    color: var(--text-on-accent) !important;
+                    border-radius: 6px !important;
+                    transform: scale(1.02) !important;
+                    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2) !important;
+                    z-index: 20 !important;
+                    position: relative !important;
+                    transition: all 0.4s ease !important;
+                }
+                
+                .azure-tree-row.active-file-highlight .pending-badge {
+                    background-color: rgba(255, 255, 255, 0.9) !important;
+                    color: var(--interactive-accent) !important;
+                    border-color: rgba(255, 255, 255, 0.7) !important;
+                }
+                
+                .azure-tree-row.active-file-fade {
+                    transition: all 0.6s ease !important;
+                    background-color: var(--background-modifier-hover) !important;
+                    color: var(--text-normal) !important;
+                    transform: scale(1) !important;
+                    box-shadow: none !important;
+                }
+                
+                .azure-tree-row.active-file-fade .pending-badge {
+                    background-color: #ffc107 !important;
+                    color: #856404 !important;
+                    border-color: #e0a800 !important;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+        
+        // Remove any existing highlights
+        const existingHighlights = this.containerEl.querySelectorAll('.active-file-highlight, .active-file-fade');
+        existingHighlights.forEach(el => {
+            el.classList.remove('active-file-highlight', 'active-file-fade');
+        });
+        
+        // Add highlight class
+        element.classList.add('active-file-highlight');
+        
+        // Remove highlight after a delay with fade effect
+        setTimeout(() => {
+            element.classList.remove('active-file-highlight');
+            element.classList.add('active-file-fade');
+            
+            setTimeout(() => {
+                element.classList.remove('active-file-fade');
+            }, 600);
+        }, 2000); // Highlight for 2 seconds, then fade for 0.6 seconds
     }
 
     // Check if all expandable nodes are expanded
@@ -280,6 +508,9 @@ export class AzureDevOpsTreeView extends ItemView {
         this.virtualScrollContainer = treeContainer;
         
         await this.buildTreeView(treeContainer);
+
+        // NEW: Start watching for active file changes
+        this.startActiveFileWatcher();
     }
 
     async refreshTreeView() {
@@ -1309,6 +1540,7 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
+    // UPDATED: Context menu without "Focus in Tree" option (moved to note context menus)
     showContextMenu(event: MouseEvent, node: WorkItemNode) {
         const menu = new Menu();
 
@@ -1427,6 +1659,12 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     async onClose() {
+        // NEW: Clean up active file watcher
+        if (this.activeFileWatcher) {
+            this.app.workspace.offref(this.activeFileWatcher);
+            this.activeFileWatcher = null;
+        }
+
         if (this.fileWatcher) {
             this.app.vault.offref(this.fileWatcher);
         }
