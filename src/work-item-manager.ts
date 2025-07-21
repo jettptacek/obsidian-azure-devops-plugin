@@ -275,28 +275,34 @@ export class WorkItemManager {
             loadingNotice.hide();
             new Notice(`✅ Pull complete: ${createdCount} created, ${updatedCount} updated`);
 
-            // Smart tree view refresh - establish baselines using content we just wrote
+            // Smart tree view refresh - only reset baselines for items we actually pulled
             const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
             if (treeView) {
-                // Clear change tracking since we just pulled fresh
+                console.log('🔄 Updating baselines for pulled work items only...');
+                
+                // Get IDs of work items that were actually processed
+                const pulledWorkItemIds = new Set(workItems.map(wi => wi.id));
+                
+                // Only clear change tracking for work items we actually pulled
                 if (treeView.changedNotes) {
-                    treeView.changedNotes.clear();
-                }
-                if (treeView.changedRelationships) {
-                    treeView.changedRelationships.clear();
+                    for (const workItemId of pulledWorkItemIds) {
+                        treeView.changedNotes.delete(workItemId);
+                    }
+                    console.log(`📊 Cleared pending changes for ${pulledWorkItemIds.size} pulled work items`);
                 }
                 
-                // Store baselines for the work items we just processed using the content we created
+                // Only clear relationship changes for work items we actually pulled
+                if (treeView.changedRelationships) {
+                    for (const workItemId of pulledWorkItemIds) {
+                        treeView.changedRelationships.delete(workItemId);
+                    }
+                }
+                
+                // Set baselines for the work items we just processed using the content we created
                 if (treeView.originalNoteContent) {
-                    // Don't clear everything - establish baselines for items we just pulled
                     for (let index = 0; index < workItems.length; index++) {
                         const workItem = workItems[index];
                         try {
-                            const fields = workItem.fields;
-                            const safeTitle = this.sanitizeFileName(fields['System.Title']);
-                            const filename = `WI-${workItem.id} ${safeTitle}.md`;
-                            const fullPath = `${folderPath}/${filename}`;
-                            
                             // We just created/updated this content, so store it as the baseline
                             const content = await this.createWorkItemNote(workItem);
                             treeView.originalNoteContent.set(workItem.id, content);
@@ -319,7 +325,8 @@ export class WorkItemManager {
                     treeView.updatePushButtonIfExists();
                 }
                 
-                console.log(`✅ Established baselines for ${workItems.length} work items without file I/O`);
+                const remainingChanges = (treeView.changedNotes?.size || 0) + (treeView.changedRelationships?.size || 0);
+                console.log(`✅ Established baselines for ${workItems.length} pulled work items. ${remainingChanges} items still have pending changes.`);
             }
             
         } catch (error) {
@@ -434,8 +441,10 @@ export class WorkItemManager {
             // Update specific work item changes in tree view
             const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
             if (treeView) {
-                if (typeof treeView.updateSpecificWorkItemChanges === 'function') {
-                    await treeView.updateSpecificWorkItemChanges(workItemId, file);  // ← Needs 'await'
+                if (typeof treeView.updateSingleNodeAfterPull === 'function') {
+                    await treeView.updateSingleNodeAfterPull(workItemId);
+                } else if (typeof treeView.updateSpecificWorkItemChanges === 'function') {
+                    await treeView.updateSpecificWorkItemChanges(workItemId, file);
                 }
             }
             

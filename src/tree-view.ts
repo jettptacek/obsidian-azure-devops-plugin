@@ -544,6 +544,22 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
+    async updateSingleNodeAfterPull(workItemId: number) {
+        console.log(`🔄 Fast update for work item ${workItemId} after pull`);
+        
+        // Clear the pending change state for this specific work item
+        this.changedNotes.delete(workItemId);
+        this.changedRelationships.delete(workItemId);
+        
+        // Update the visual state of just this one node
+        await this.updateNodeVisualState(workItemId);
+        
+        // Update push button
+        this.updatePushButtonIfExists();
+        
+        console.log(`✅ Fast update completed for work item ${workItemId}`);
+    }
+
     async buildTreeView(container: HTMLElement) {
         try {
             await this.loadWorkItemTypeIcons();
