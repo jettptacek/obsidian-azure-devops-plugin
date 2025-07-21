@@ -182,14 +182,36 @@ export default class AzureDevOpsPlugin extends Plugin {
                 // Always create a note for the new work item
                 await this.createNoteForWorkItem(result);
                 
-                // Refresh the tree view to show the new work item
-                this.refreshTreeView();
+                // FIXED: Proper type casting for tree view
+                const leaves = this.app.workspace.getLeavesOfType('azure-devops-tree-view');
+                if (leaves.length > 0) {
+                    const treeView = leaves[0].view;
+                    
+                    // Type-safe check and cast to your specific tree view class
+                    if (treeView.getViewType() === 'azure-devops-tree-view') {
+                        const azureTreeView = treeView as any; // Cast to bypass TypeScript
+                        
+                        if (typeof azureTreeView.addNewWorkItemToTree === 'function') {
+                            // Use optimized add method
+                            await azureTreeView.addNewWorkItemToTree(result);
+                        } else {
+                            // Fallback to full refresh if optimized method doesn't exist
+                            this.refreshTreeView();
+                        }
+                    } else {
+                        // Fallback if not the right view type
+                        this.refreshTreeView();
+                    }
+                } else {
+                    // No tree view open, no need to refresh
+                    console.log('No tree view open, skipping tree update');
+                }
                 
                 // Navigate to the new work item in tree view if possible
                 if (result.id && this.workItemManager) {
                     setTimeout(() => {
                         this.workItemManager.navigateToWorkItemInTree(result.id);
-                    }, 1000); // Small delay to allow for tree refresh
+                    }, 500); // Reduced delay since no full refresh
                 }
                 
                 return {
@@ -252,17 +274,11 @@ export default class AzureDevOpsPlugin extends Plugin {
 
     async pushSpecificWorkItem(file: TFile) {
         const result = await this.workItemManager.pushSpecificWorkItem(file);
-        if (result) {
-            this.refreshTreeView();
-        }
         return result;
     }
 
     async pullSpecificWorkItem(file: TFile) {
         const result = await this.workItemManager.pullSpecificWorkItem(file);
-        if (result) {
-            this.refreshTreeView();
-        }
         return result;
     }
 

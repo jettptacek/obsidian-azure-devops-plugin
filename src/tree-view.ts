@@ -800,8 +800,15 @@ export class AzureDevOpsTreeView extends ItemView {
 
     // Update visual state of a specific node
     async updateNodeVisualState(workItemId: number) {
+        const startTime = Date.now();
+        console.log(`⏱️ [VISUAL] Starting updateNodeVisualState for ${workItemId}`);
+        
+        const step1 = Date.now();
         const nodeElement = this.nodeElements.get(workItemId);
+        console.log(`⏱️ [VISUAL] Find node element: ${Date.now() - step1}ms`);
+        
         if (nodeElement) {
+            const step2 = Date.now();
             const hasRelationshipChange = this.changedRelationships.has(workItemId);
             const hasContentChange = this.changedNotes.has(workItemId);
             const hasPendingChanges = hasRelationshipChange || hasContentChange;
@@ -811,7 +818,9 @@ export class AzureDevOpsTreeView extends ItemView {
             } else {
                 nodeElement.classList.remove('pending-change');
             }
+            console.log(`⏱️ [VISUAL] Update classes: ${Date.now() - step2}ms`);
             
+            const step3 = Date.now();
             // Update the title container to show the appropriate badge
             const titleContainer = nodeElement.querySelector('div[style*="flex-grow"]') as HTMLElement;
             if (titleContainer) {
@@ -840,7 +849,13 @@ export class AzureDevOpsTreeView extends ItemView {
                     titleContainer.appendChild(badge);
                 }
             }
+            console.log(`⏱️ [VISUAL] Update badge: ${Date.now() - step3}ms`);
+        } else {
+            console.log(`⏱️ [VISUAL] No node element found for ${workItemId}`);
         }
+        
+        const totalTime = Date.now() - startTime;
+        console.log(`⏱️ [VISUAL] TOTAL updateNodeVisualState: ${totalTime}ms`);
     }
 
     storeOriginalRelationships(nodes: WorkItemNode[]) {
@@ -1783,21 +1798,95 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     async updateSpecificWorkItemChanges(workItemId: number, file: TFile) {
+        const startTime = Date.now();
+        console.log(`⏱️ [TREE] Starting updateSpecificWorkItemChanges for ${workItemId}`);
+        
         try {
-            // Update the original content for this specific work item
+            const step1 = Date.now();
+            console.log(`🔄 Processing pull update for work item ${workItemId}`);
+            
+            // Update the original content for this specific work item (from pull)
             const newContent = await this.app.vault.read(file);
+            console.log(`⏱️ [TREE] Read file: ${Date.now() - step1}ms`);
+            
+            const step2 = Date.now();
             this.originalNoteContent.set(workItemId, newContent);
             
             // Clear any pending content changes for this work item since we just pulled fresh data
             this.changedNotes.delete(workItemId);
+            console.log(`⏱️ [TREE] Update tracking: ${Date.now() - step2}ms`);
             
+            const step3 = Date.now();
             // Update the visual state for this specific node
             await this.updateNodeVisualState(workItemId);
             this.updatePushButtonIfExists();
+            console.log(`⏱️ [TREE] Update visual state: ${Date.now() - step3}ms`);
             
-            console.log(`Updated change detection for work item ${workItemId}`);
+            const totalTime = Date.now() - startTime;
+            console.log(`⏱️ [TREE] TOTAL updateSpecificWorkItemChanges: ${totalTime}ms`);
+            console.log(`✅ Updated change detection for work item ${workItemId} after pull`);
         } catch (error) {
             console.error(`Error updating change detection for work item ${workItemId}:`, error);
+            console.log(`⏱️ [TREE] ERROR after ${Date.now() - startTime}ms`);
+        }
+    }
+
+    async addNewWorkItemToTree(newWorkItem: any) {
+        console.log(`➕ Adding new work item ${newWorkItem.id} to tree`);
+        
+        try {
+            // Create the new node
+            const fields = newWorkItem.fields;
+            const newNode: WorkItemNode = {
+                id: newWorkItem.id,
+                title: fields['System.Title'] || 'Untitled',
+                type: fields['System.WorkItemType'] || 'Unknown',
+                state: fields['System.State'] || 'Unknown',
+                assignedTo: fields['System.AssignedTo']?.displayName || 'Unassigned',
+                priority: fields['Microsoft.VSTS.Common.Priority']?.toString() || '',
+                children: [],
+                filePath: this.getWorkItemFilePath(newWorkItem.id, fields['System.Title'])
+            };
+            
+            // Add to our node map
+            this.allNodes.set(newWorkItem.id, newNode);
+            
+            // Set baseline content for this new item (it's clean since just created)
+            if (newNode.filePath) {
+                try {
+                    const file = this.app.vault.getAbstractFileByPath(newNode.filePath);
+                    if (file instanceof TFile) {
+                        const content = await this.app.vault.read(file);
+                        this.originalNoteContent.set(newWorkItem.id, content);
+                    }
+                } catch (error) {
+                    console.log(`Could not read file for new work item ${newWorkItem.id}:`, error);
+                }
+            }
+            
+            // Determine where to place it in the tree (as root item for now)
+            this.workItemsTree.push(newNode);
+            
+            // Sort the tree to put it in the right position
+            this.sortNodes(this.workItemsTree);
+            
+            // Re-render just the tree structure (much faster than full refresh)
+            const treeContainer = this.containerEl.querySelector('.azure-tree-container') as HTMLElement;
+            if (treeContainer) {
+                // Clear and re-render (still faster than full buildTreeView)
+                this.renderedNodes.clear();
+                this.nodeElements.clear();
+                treeContainer.empty();
+                this.renderTreeOptimized(treeContainer, this.workItemsTree);
+            }
+            
+            console.log(`✅ Successfully added work item ${newWorkItem.id} to tree`);
+            
+        } catch (error) {
+            console.error(`Error adding new work item to tree:`, error);
+            // Fallback to full refresh if optimized add fails
+            console.log('Falling back to full tree refresh...');
+            await this.refreshTreeView();
         }
     }
 
