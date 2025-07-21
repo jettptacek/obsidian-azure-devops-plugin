@@ -274,9 +274,53 @@ export class WorkItemManager {
 
             loadingNotice.hide();
             new Notice(`✅ Pull complete: ${createdCount} created, ${updatedCount} updated`);
-            
-            // Refresh tree view change detection
-            this.refreshTreeViewChangeDetection();
+
+            // Smart tree view refresh - establish baselines using content we just wrote
+            const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+            if (treeView) {
+                // Clear change tracking since we just pulled fresh
+                if (treeView.changedNotes) {
+                    treeView.changedNotes.clear();
+                }
+                if (treeView.changedRelationships) {
+                    treeView.changedRelationships.clear();
+                }
+                
+                // Store baselines for the work items we just processed using the content we created
+                if (treeView.originalNoteContent) {
+                    // Don't clear everything - establish baselines for items we just pulled
+                    for (let index = 0; index < workItems.length; index++) {
+                        const workItem = workItems[index];
+                        try {
+                            const fields = workItem.fields;
+                            const safeTitle = this.sanitizeFileName(fields['System.Title']);
+                            const filename = `WI-${workItem.id} ${safeTitle}.md`;
+                            const fullPath = `${folderPath}/${filename}`;
+                            
+                            // We just created/updated this content, so store it as the baseline
+                            const content = await this.createWorkItemNote(workItem);
+                            treeView.originalNoteContent.set(workItem.id, content);
+                        } catch (error) {
+                            console.error(`Error setting baseline for work item ${workItem.id}:`, error);
+                        }
+                        
+                        // Show progress for large pulls
+                        if (index % 100 === 0 && workItems.length > 200) {
+                            console.log(`Set baselines for ${index + 1}/${workItems.length} work items`);
+                        }
+                    }
+                }
+                
+                // Update visual state
+                if (typeof treeView.refreshTreeDisplay === 'function') {
+                    await treeView.refreshTreeDisplay();
+                }
+                if (typeof treeView.updatePushButtonIfExists === 'function') {
+                    treeView.updatePushButtonIfExists();
+                }
+                
+                console.log(`✅ Established baselines for ${workItems.length} work items without file I/O`);
+            }
             
         } catch (error) {
             loadingNotice.hide();
@@ -326,9 +370,17 @@ export class WorkItemManager {
                 await this.updateNotePushTimestamp(file, content);
                 loadingNotice.hide();
                 new Notice(`✅ Work item ${workItemId} pushed successfully`);
-                this.refreshTreeViewChangeDetection();
+                
+                // Notify tree view of successful push so it can clear highlighting for this specific item
+                const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+                if (treeView && typeof treeView.handleSuccessfulWorkItemPush === 'function') {
+                    await treeView.handleSuccessfulWorkItemPush(workItemId);
+                }
+                
+                return true;
             } else {
                 loadingNotice.hide();
+                return false;
             }
             
             return success;
@@ -378,9 +430,14 @@ export class WorkItemManager {
             
             loadingNotice.hide();
             new Notice(`✅ Work item ${workItemId} pulled successfully`);
-            
+
             // Update specific work item changes in tree view
-            this.updateSpecificWorkItemChanges(workItemId, file);
+            const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+            if (treeView) {
+                if (typeof treeView.updateSpecificWorkItemChanges === 'function') {
+                    await treeView.updateSpecificWorkItemChanges(workItemId, file);  // ← Needs 'await'
+                }
+            }
             
             return true;
         } catch (error) {
@@ -1315,22 +1372,6 @@ ${relationshipSections}
         }
 
         await this.app.vault.modify(file, updatedContent);
-    }
-
-    // Refresh tree view change detection
-    private refreshTreeViewChangeDetection() {
-        const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
-        if (treeView && typeof treeView.refreshChangeDetection === 'function') {
-            treeView.refreshChangeDetection();
-        }
-    }
-
-    // Update specific work item changes in tree view
-    private updateSpecificWorkItemChanges(workItemId: number, file: TFile) {
-        const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
-        if (treeView && typeof treeView.updateSpecificWorkItemChanges === 'function') {
-            treeView.updateSpecificWorkItemChanges(workItemId, file);
-        }
     }
 
     // Clear related items cache

@@ -1466,6 +1466,8 @@ export class AzureDevOpsTreeView extends ItemView {
 
             let successCount = 0;
             let errorCount = 0;
+            const successfulRelationshipChanges: number[] = [];
+            const successfulContentChanges: number[] = [];
 
             // Push relationship changes
             if (this.changedRelationships.size > 0) {
@@ -1473,19 +1475,23 @@ export class AzureDevOpsTreeView extends ItemView {
                 
                 for (const [childId, newParentId] of changedItems) {
                     try {
+                        let success = false;
                         if (newParentId !== null) {
-                            const success = await this.plugin.api.addParentChildRelationship(childId, newParentId);
-                            if (success) {
-                                successCount++;
-                            } else {
-                                errorCount++;
-                            }
+                            success = await this.plugin.api.addParentChildRelationship(childId, newParentId);
                         } else {
-                            await this.plugin.api.removeAllParentRelationships(childId);
+                            success = await this.plugin.api.removeAllParentRelationships(childId);
+                        }
+                        
+                        if (success) {
                             successCount++;
+                            successfulRelationshipChanges.push(childId);
+                            console.log(`✅ Successfully pushed relationship change for work item ${childId}`);
+                        } else {
+                            errorCount++;
+                            console.error(`❌ Failed to push relationship change for work item ${childId}`);
                         }
                     } catch (error) {
-                        console.error(`Error updating relationship for work item ${childId}:`, error);
+                        console.error(`❌ Error updating relationship for work item ${childId}:`, error);
                         errorCount++;
                     }
                 }
@@ -1493,7 +1499,9 @@ export class AzureDevOpsTreeView extends ItemView {
 
             // Push content changes
             if (this.changedNotes.size > 0) {
-                for (const workItemId of this.changedNotes) {
+                const changedNotesList = Array.from(this.changedNotes);
+                
+                for (const workItemId of changedNotesList) {
                     try {
                         const node = this.allNodes.get(workItemId);
                         if (node && node.filePath) {
@@ -1502,39 +1510,82 @@ export class AzureDevOpsTreeView extends ItemView {
                                 const success = await this.plugin.workItemManager.pushSpecificWorkItem(file);
                                 if (success) {
                                     successCount++;
-                                    // Update original content since we successfully pushed
-                                    const newContent = await this.app.vault.read(file);
-                                    this.originalNoteContent.set(workItemId, newContent);
-                                    this.changedNotes.delete(workItemId);
+                                    successfulContentChanges.push(workItemId);
+                                    console.log(`✅ Successfully pushed content changes for work item ${workItemId}`);
                                 } else {
                                     errorCount++;
+                                    console.error(`❌ Failed to push content changes for work item ${workItemId}`);
                                 }
                             }
                         }
                     } catch (error) {
-                        console.error(`Error pushing content for work item ${workItemId}:`, error);
+                        console.error(`❌ Error pushing content for work item ${workItemId}:`, error);
                         errorCount++;
                     }
                 }
             }
 
-            if (errorCount === 0) {
-                new Notice(`Successfully pushed all changes!`);
-                this.changedRelationships.clear();
-                this.hasUnsavedChanges = false;
-                this.storeOriginalRelationships(this.workItemsTree);
-            } else {
-                new Notice(`Pushed ${successCount} changes, ${errorCount} failed. Check console for details.`);
+            // Clear tracking only for successfully pushed items
+            console.log(`🔄 Clearing tracking for ${successfulRelationshipChanges.length} relationship changes and ${successfulContentChanges.length} content changes`);
+            
+            // Clear successful relationship changes
+            for (const workItemId of successfulRelationshipChanges) {
+                this.changedRelationships.delete(workItemId);
+                console.log(`✅ Cleared relationship tracking for work item ${workItemId}`);
             }
             
-            this.updatePushButtonIfExists();
+            // Clear successful content changes and update their baselines
+            for (const workItemId of successfulContentChanges) {
+                this.changedNotes.delete(workItemId);
+                
+                // Update the baseline for this specific work item
+                const node = this.allNodes.get(workItemId);
+                if (node && node.filePath) {
+                    try {
+                        const file = this.app.vault.getAbstractFileByPath(node.filePath);
+                        if (file instanceof TFile) {
+                            const newContent = await this.app.vault.read(file);
+                            this.originalNoteContent.set(workItemId, newContent);
+                            console.log(`✅ Updated baseline for work item ${workItemId}`);
+                        }
+                    } catch (error) {
+                        console.error(`Error updating baseline for work item ${workItemId}:`, error);
+                    }
+                }
+            }
+
+            // Update visual state for all affected items (both successful and failed)
+            const allAffectedItems = [
+                ...Array.from(this.changedRelationships.keys()),
+                ...successfulRelationshipChanges,
+                ...Array.from(this.changedNotes),
+                ...successfulContentChanges
+            ];
             
-            setTimeout(() => {
-                this.refreshTreeView();
-            }, 1000);
+            const uniqueAffectedItems = [...new Set(allAffectedItems)];
+            
+            for (const workItemId of uniqueAffectedItems) {
+                await this.updateNodeVisualState(workItemId);
+            }
+
+            // Update overall state
+            this.hasUnsavedChanges = this.changedRelationships.size > 0 || this.changedNotes.size > 0;
+            this.updatePushButtonIfExists();
+
+            // Show results
+            if (errorCount === 0) {
+                new Notice(`✅ Successfully pushed all ${successCount} changes!`);
+            } else {
+                const remainingChanges = this.changedRelationships.size + this.changedNotes.size;
+                new Notice(`📊 Pushed ${successCount} changes successfully. ${errorCount} failed, ${remainingChanges} still pending. Check console for details.`);
+            }
+            
+            // Don't do a full tree refresh - just update the display
+            console.log(`📊 Final state: ${this.changedRelationships.size} relationship changes, ${this.changedNotes.size} content changes still pending`);
 
         } catch (error) {
-            new Notice(`Error pushing changes: ${error.message}`);
+            new Notice(`❌ Error pushing changes: ${error.message}`);
+            console.error('Push error:', error);
         }
     }
 
@@ -1614,6 +1665,23 @@ export class AzureDevOpsTreeView extends ItemView {
         menu.showAtMouseEvent(event);
     }
 
+    async clearAllPendingChanges() {
+        console.log('🔄 TreeView: Fast clearing all pending changes after pull operation');
+        
+        // Clear all change tracking instantly
+        this.changedNotes.clear();
+        this.changedRelationships.clear();
+        this.hasUnsavedChanges = false;
+        
+        // Clear the original content map - we'll rebuild it lazily as needed
+        this.originalNoteContent.clear();
+        
+        // Update visual state immediately
+        await this.refreshTreeDisplay();
+        this.updatePushButtonIfExists();
+        
+        console.log('✅ TreeView: All pending changes cleared instantly');
+    }
     makeRootItem(node: WorkItemNode) {
         if (node.parent) {
             const oldParent = node.parent;
@@ -1647,10 +1715,55 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     async refreshChangeDetection() {
-        await this.storeOriginalNoteContent(this.workItemsTree);
         await this.detectNoteChanges(this.workItemsTree);
         await this.refreshTreeDisplay();
         this.updatePushButtonIfExists();
+    }
+
+    async resetContentBaselines() {
+        console.log('🔄 TreeView: Resetting content baselines after pull/push operation');
+        
+        // Clear all change tracking
+        this.changedNotes.clear();
+        
+        // Re-store original content as the new baseline
+        await this.storeOriginalNoteContent(this.workItemsTree);
+        
+        // Refresh the visual state
+        await this.refreshTreeDisplay();
+        this.updatePushButtonIfExists();
+        
+        console.log('✅ TreeView: Content baselines reset');
+    }
+
+    async handleSuccessfulWorkItemPush(workItemId: number) {
+        console.log(`🔄 Handling successful push for work item ${workItemId}`);
+        
+        // Remove from changed notes if it was there
+        this.changedNotes.delete(workItemId);
+        
+        // Update the baseline for this specific work item
+        const node = this.allNodes.get(workItemId);
+        if (node && node.filePath) {
+            try {
+                const file = this.app.vault.getAbstractFileByPath(node.filePath);
+                if (file instanceof TFile) {
+                    const newContent = await this.app.vault.read(file);
+                    this.originalNoteContent.set(workItemId, newContent);
+                    console.log(`✅ Updated baseline for work item ${workItemId}`);
+                }
+            } catch (error) {
+                console.error(`Error updating baseline for work item ${workItemId}:`, error);
+            }
+        }
+        
+        // Update visual state for this specific item
+        await this.updateNodeVisualState(workItemId);
+        
+        // Update push button
+        this.updatePushButtonIfExists();
+        
+        console.log(`✅ Successfully cleared pending state for work item ${workItemId}`);
     }
 
     async updateSpecificWorkItemChanges(workItemId: number, file: TFile) {

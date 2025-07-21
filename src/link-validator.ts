@@ -438,6 +438,10 @@ export class AzureDevOpsLinkValidator {
                 // Refresh tree view if it exists
                 const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
                 if (treeView && typeof treeView.refreshChangeDetection === 'function') {
+                    console.log('🔧 DEBUG: Refreshing tree view after link validator changes...');
+                    
+                    // Just refresh the tree view - DON'T update the baseline
+                    // This will detect the link validator changes as "pending changes" which is what we want
                     await treeView.refreshChangeDetection();
                 }
             } else {
