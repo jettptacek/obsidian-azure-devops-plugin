@@ -6,12 +6,14 @@ import { AzureDevOpsSettingTab } from './settings-tab';
 import { AzureDevOpsAPI } from './api';
 import { WorkItemManager } from './work-item-manager';
 import { MenuManager } from './menu-manager';
+import { AzureDevOpsLinkValidator } from './link-validator'; // ADD THIS IMPORT
 
 export default class AzureDevOpsPlugin extends Plugin {
     settings: AzureDevOpsSettings;
     api: AzureDevOpsAPI;
     workItemManager: WorkItemManager;
     menuManager: MenuManager;
+    linkValidator: AzureDevOpsLinkValidator; // ADD THIS PROPERTY
 
     async onload() {
         await this.loadSettings();
@@ -20,6 +22,7 @@ export default class AzureDevOpsPlugin extends Plugin {
         this.api = new AzureDevOpsAPI(this.settings);
         this.workItemManager = new WorkItemManager(this.app, this.api, this.settings, this);
         this.menuManager = new MenuManager(this.app, this.workItemManager);
+        this.linkValidator = new AzureDevOpsLinkValidator(this.app, this.api, this.settings, this); // ADD THIS LINE
 
         // Register the tree view
         this.registerView(
@@ -38,6 +41,15 @@ export default class AzureDevOpsPlugin extends Plugin {
 
         this.addRibbonIcon('git-branch', 'Azure DevOps Tree View', () => {
             this.activateTreeView();
+        });
+
+        // ADD THIS NEW RIBBON ICON FOR LINK VALIDATION
+        this.addRibbonIcon('link', 'Validate Azure DevOps Links', () => {
+            if (!this.settings.organization || !this.settings.project || !this.settings.personalAccessToken) {
+                new Notice('❌ Please configure Azure DevOps settings first');
+                return;
+            }
+            this.linkValidator.validateAllAzureDevOpsLinks();
         });
 
         // Add commands
@@ -69,6 +81,19 @@ export default class AzureDevOpsPlugin extends Plugin {
             id: 'push-work-item',
             name: 'Push Work Item to Azure DevOps',
             callback: () => this.workItemManager.pushCurrentWorkItem()
+        });
+
+        // ADD THIS NEW COMMAND FOR LINK VALIDATION
+        this.addCommand({
+            id: 'validate-azure-devops-links',
+            name: 'Validate Azure DevOps Links in Descriptions',
+            callback: () => {
+                if (!this.settings.organization || !this.settings.project || !this.settings.personalAccessToken) {
+                    new Notice('❌ Please configure Azure DevOps settings first');
+                    return;
+                }
+                this.linkValidator.validateAllAzureDevOpsLinks();
+            }
         });
 
         // Register context menu handlers
@@ -118,6 +143,10 @@ export default class AzureDevOpsPlugin extends Plugin {
         if (this.workItemManager) {
             this.workItemManager.updateSettings(this.settings);
         }
+        // ADD THIS TO UPDATE LINK VALIDATOR SETTINGS
+        if (this.linkValidator) {
+            this.linkValidator.settings = this.settings;
+        }
     }
 
     async saveSettings() {
@@ -129,6 +158,10 @@ export default class AzureDevOpsPlugin extends Plugin {
         }
         if (this.workItemManager) {
             this.workItemManager.updateSettings(this.settings);
+        }
+        // ADD THIS TO UPDATE LINK VALIDATOR SETTINGS
+        if (this.linkValidator) {
+            this.linkValidator.settings = this.settings;
         }
     }
 
@@ -235,5 +268,10 @@ export default class AzureDevOpsPlugin extends Plugin {
 
     sanitizeFileName(title: string): string {
         return this.workItemManager.sanitizeFileName(title);
+    }
+
+    // ADD THIS NEW METHOD TO EXPOSE LINK VALIDATION FUNCTIONALITY
+    async validateAzureDevOpsLinks(): Promise<void> {
+        return this.linkValidator.validateAllAzureDevOpsLinks();
     }
 }

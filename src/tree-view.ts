@@ -329,13 +329,19 @@ export class AzureDevOpsTreeView extends ItemView {
                 
                 .azure-tree-row.active-file-fade {
                     transition: all 0.6s ease !important;
-                    background-color: var(--background-modifier-hover) !important;
-                    color: var(--text-normal) !important;
-                    transform: scale(1) !important;
-                    box-shadow: none !important;
                 }
                 
-                .azure-tree-row.active-file-fade .pending-badge {
+                /* IMPORTANT: Ensure pending changes highlighting is preserved after navigation highlight */
+                .azure-tree-row.pending-change.active-file-fade {
+                    background-color: #fff3cd !important;
+                    border-left: 4px solid #ffc107 !important;
+                    border-right: 2px solid #ffc107 !important;
+                    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3) !important;
+                    transform: translateX(2px) !important;
+                    color: var(--text-normal) !important;
+                }
+                
+                .azure-tree-row.pending-change.active-file-fade .pending-badge {
                     background-color: #ffc107 !important;
                     color: #856404 !important;
                     border-color: #e0a800 !important;
@@ -343,6 +349,9 @@ export class AzureDevOpsTreeView extends ItemView {
             `;
             document.head.appendChild(style);
         }
+        
+        // Store original classes to restore them later
+        const hadPendingChange = element.classList.contains('pending-change');
         
         // Remove any existing highlights
         const existingHighlights = this.containerEl.querySelectorAll('.active-file-highlight, .active-file-fade');
@@ -360,6 +369,11 @@ export class AzureDevOpsTreeView extends ItemView {
             
             setTimeout(() => {
                 element.classList.remove('active-file-fade');
+                
+                // IMPORTANT: Restore pending-change class if it was there originally
+                if (hadPendingChange) {
+                    element.classList.add('pending-change');
+                }
             }, 600);
         }, 2000); // Highlight for 2 seconds, then fade for 0.6 seconds
     }
