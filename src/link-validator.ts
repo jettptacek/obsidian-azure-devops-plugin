@@ -171,7 +171,7 @@ export class AzureDevOpsLinkValidator {
         // OPTIMIZATION 1: Check if we already have titles from existing notes
         const actualTitles = new Map<number, string>();
         let foundFromNotes = 0;
-        
+
         // Try to get titles from existing work item notes first (much faster)
         for (const workItemId of workItemIds) {
             const workItemFile = this.app.vault.getMarkdownFiles()
@@ -181,18 +181,57 @@ export class AzureDevOpsLinkValidator {
             if (workItemFile) {
                 try {
                     const content = await this.app.vault.read(workItemFile);
-                    const titleMatch = content.match(/^# (.+)$/m);
-                    if (titleMatch) {
-                        const title = titleMatch[1].trim();
-                        actualTitles.set(workItemId, title);
-                        foundFromNotes++;
+                    
+                    // IMPROVED: Multiple ways to extract the title, with fallbacks
+                    let extractedTitle = '';
+                    
+                    // Method 1: Extract from frontmatter (most reliable)
+                    const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+                    if (frontmatterMatch) {
+                        const frontmatter = frontmatterMatch[1];
+                        const titleMatch = frontmatter.match(/^title:\s*["']?([^"'\n]+)["']?$/m);
+                        if (titleMatch) {
+                            extractedTitle = titleMatch[1].trim();
+                        }
                     }
+                    
+                    // Method 2: If no frontmatter title, try the main heading (but be more specific)
+                    if (!extractedTitle) {
+                        // Look for the first H1 heading after frontmatter, but not section headers
+                        const afterFrontmatter = content.replace(/^---\n[\s\S]*?\n---\n/, '');
+                        const headingMatch = afterFrontmatter.match(/^# (.+)$/m);
+                        if (headingMatch) {
+                            const heading = headingMatch[1].trim();
+                            
+                            // Skip if it looks like a section header instead of work item title
+                            if (!['Custom Fields', 'Description', 'Links', 'Details', 'Acceptance Criteria'].includes(heading)) {
+                                extractedTitle = heading;
+                            }
+                        }
+                    }
+                    
+                    // Method 3: Extract title from filename as last resort
+                    if (!extractedTitle) {
+                        const fileNameMatch = workItemFile.name.match(/^WI-\d+\s+(.+)\.md$/);
+                        if (fileNameMatch) {
+                            extractedTitle = fileNameMatch[1].trim();
+                        }
+                    }
+                    
+                    if (extractedTitle) {
+                        actualTitles.set(workItemId, extractedTitle);
+                        foundFromNotes++;
+                        console.log(`📝 Work item ${workItemId}: "${extractedTitle}" (from ${workItemFile.name})`);
+                    } else {
+                        console.log(`⚠️ Could not extract title for work item ${workItemId} from ${workItemFile.name}`);
+                    }
+                    
                 } catch (error) {
-                    // File read failed, we'll fetch from API later
+                    console.log(`❌ Error reading file for work item ${workItemId}:`, error);
                 }
             }
         }
-        
+
         console.log(`✅ Found ${foundFromNotes} titles from existing notes (fast)`);
         
         // OPTIMIZATION 2: Only fetch from API the work items we don't have titles for
