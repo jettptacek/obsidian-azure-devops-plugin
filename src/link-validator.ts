@@ -38,7 +38,7 @@ export class AzureDevOpsLinkValidator {
 
     // Main command to validate all Azure DevOps links in descriptions
     async validateAllAzureDevOpsLinks() {
-        const loadingNotice = new Notice('🔍 Scanning Azure DevOps links in descriptions...', 0);
+        const loadingNotice = new Notice('🔍 Scanning links... (0% complete)', 0);
         
         try {
             // Get all work item notes
@@ -166,56 +166,77 @@ export class AzureDevOpsLinkValidator {
         }
 
         const workItemIds = Array.from(referencedWorkItemIds);
-        console.log('🔍 DEBUG: Found work item IDs to validate:', workItemIds);
+        console.log('🔍 DEBUG: Found work item IDs to validate:', workItemIds.length, 'unique work items');
 
-        // Get current titles from Azure DevOps with robust handling
+        // OPTIMIZATION 1: Check if we already have titles from existing notes
         const actualTitles = new Map<number, string>();
+        let foundFromNotes = 0;
         
-        // First try batch requests, then fall back to individual requests
-        const batchSize = 50;
-        for (let i = 0; i < workItemIds.length; i += batchSize) {
-            const batch = workItemIds.slice(i, i + batchSize);
+        // Try to get titles from existing work item notes first (much faster)
+        for (const workItemId of workItemIds) {
+            const workItemFile = this.app.vault.getMarkdownFiles()
+                .find(file => file.path.startsWith('Azure DevOps Work Items/') && 
+                            file.name.startsWith(`WI-${workItemId} `));
             
-            try {
-                console.log(`🔍 DEBUG: Trying batch fetch:`, batch);
-                const workItems = await this.fetchWorkItemsBatch(batch);
-                
-                if (workItems.length > 0) {
-                    // Batch succeeded
-                    console.log(`✅ DEBUG: Batch succeeded, got ${workItems.length} work items`);
-                    for (const workItem of workItems) {
-                        const actualTitle = workItem.fields['System.Title'] || '';
-                        actualTitles.set(workItem.id, actualTitle);
+            if (workItemFile) {
+                try {
+                    const content = await this.app.vault.read(workItemFile);
+                    const titleMatch = content.match(/^# (.+)$/m);
+                    if (titleMatch) {
+                        const title = titleMatch[1].trim();
+                        actualTitles.set(workItemId, title);
+                        foundFromNotes++;
                     }
-                } else {
-                    // Batch failed, try individual requests
-                    console.log(`⚠️ DEBUG: Batch failed, trying individual requests for ${batch.length} items`);
-                    
-                    for (const workItemId of batch) {
-                        try {
-                            const workItem = await this.fetchIndividualWorkItem(workItemId);
-                            if (workItem) {
-                                const actualTitle = workItem.fields['System.Title'] || '';
-                                actualTitles.set(workItem.id, actualTitle);
-                                console.log(`✅ DEBUG: Individual fetch succeeded for ${workItemId}: "${actualTitle}"`);
-                            } else {
-                                console.log(`❌ DEBUG: Individual fetch failed for ${workItemId}`);
-                            }
-                        } catch (error) {
-                            console.log(`❌ DEBUG: Individual fetch error for ${workItemId}:`, error.message);
-                        }
-                    }
+                } catch (error) {
+                    // File read failed, we'll fetch from API later
                 }
-            } catch (error) {
-                console.error(`Error processing batch starting at ${i}:`, error);
+            }
+        }
+        
+        console.log(`✅ Found ${foundFromNotes} titles from existing notes (fast)`);
+        
+        // OPTIMIZATION 2: Only fetch from API the work items we don't have titles for
+        const idsToFetch = workItemIds.filter(id => !actualTitles.has(id));
+        console.log(`🔍 Need to fetch ${idsToFetch.length} work items from Azure DevOps API`);
+        
+        if (idsToFetch.length > 0) {
+            // OPTIMIZATION 3: Use smart batching that handles failures gracefully
+            await this.fetchWorkItemTitlesSmart(idsToFetch, actualTitles);
+        }
+
+        console.log(`🔍 DEBUG: Total actual titles collected: ${actualTitles.size} out of ${workItemIds.length}`);
+
+        // OPTIMIZATION: Pre-build a map of links to their source files to avoid repeated searches
+        console.log('🔍 Building link-to-file mapping...');
+        const linkToFilesMap = new Map<string, string[]>();
+
+        for (const [fileWorkItemId, links] of azureDevOpsLinks) {
+            // Get the source file path for this work item
+            const sourceFile = this.app.vault.getMarkdownFiles()
+                .find(file => file.path.startsWith('Azure DevOps Work Items/') && 
+                            file.name.match(new RegExp(`^WI-${fileWorkItemId}\\s`)));
+            
+            if (sourceFile) {
+                const filePath = sourceFile.path;
+                
+                for (const link of links) {
+                    // Create a unique key for this link
+                    const linkKey = `${link.workItemId}:${link.linkText}`;
+                    
+                    if (!linkToFilesMap.has(linkKey)) {
+                        linkToFilesMap.set(linkKey, []);
+                    }
+                    linkToFilesMap.get(linkKey)!.push(filePath);
+                }
             }
         }
 
-        console.log(`🔍 DEBUG: Total actual titles fetched: ${actualTitles.size}`);
+        console.log(`📊 Built mapping for ${linkToFilesMap.size} unique links`);
 
-        // Compare display text with actual titles
+        // Compare display text with actual titles (now much faster)
+        let processedCount = 0;
         for (const [fileWorkItemId, links] of azureDevOpsLinks) {
-            console.log(`🔍 DEBUG: Processing links from file WI-${fileWorkItemId}:`, links.length, 'links');
+            console.log(`🔍 DEBUG: Processing links from file WI-${fileWorkItemId}: ${links.length} links`);
             
             for (const link of links) {
                 const actualTitle = actualTitles.get(link.workItemId);
@@ -228,7 +249,9 @@ export class AzureDevOpsLinkValidator {
                 if (actualTitle && link.displayText !== actualTitle) {
                     console.log(`🚨 DEBUG: MISMATCH FOUND for work item ${link.workItemId}!`);
                     
-                    const affectedFiles = await this.findFilesWithAzureDevOpsLink(link);
+                    // Use pre-built mapping instead of searching files
+                    const linkKey = `${link.workItemId}:${link.linkText}`;
+                    const affectedFiles = linkToFilesMap.get(linkKey) || [];
                     
                     invalidLinks.push({
                         workItemId: link.workItemId,
@@ -241,10 +264,91 @@ export class AzureDevOpsLinkValidator {
                     console.log(`⚠️ DEBUG: No actual title found for work item ${link.workItemId} (404 or permission issue)`);
                 }
             }
+            
+            processedCount++;
+            // Show progress for large numbers of files
+            if (processedCount % 50 === 0 || processedCount === azureDevOpsLinks.size) {
+                console.log(`📊 Processed ${processedCount}/${azureDevOpsLinks.size} files`);
+            }
         }
 
         console.log(`🔍 DEBUG: Found ${invalidLinks.length} invalid links total`);
         return invalidLinks;
+    }
+
+    async fetchWorkItemTitlesSmart(workItemIds: number[], actualTitles: Map<number, string>) {
+        if (workItemIds.length === 0) return;
+        
+        // OPTIMIZATION 4: Try progressively smaller batch sizes
+        const batchSizes = [50, 25, 10, 5];
+        let remainingIds = [...workItemIds];
+        
+        for (const batchSize of batchSizes) {
+            if (remainingIds.length === 0) break;
+            
+            console.log(`🔍 Trying batch size ${batchSize} for ${remainingIds.length} remaining work items...`);
+            
+            const newRemainingIds: number[] = [];
+            
+            // Process in batches of current size
+            for (let i = 0; i < remainingIds.length; i += batchSize) {
+                const batch = remainingIds.slice(i, i + batchSize);
+                
+                try {
+                    const workItems = await this.fetchWorkItemsBatch(batch);
+                    
+                    if (workItems.length > 0) {
+                        // Success! Extract titles
+                        for (const workItem of workItems) {
+                            const title = workItem.fields['System.Title'] || '';
+                            actualTitles.set(workItem.id, title);
+                        }
+                        
+                        // Remove successfully fetched IDs from remaining
+                        const fetchedIds = new Set(workItems.map(wi => wi.id));
+                        const notFetched = batch.filter(id => !fetchedIds.has(id));
+                        newRemainingIds.push(...notFetched);
+                        
+                        console.log(`✅ Batch succeeded: got ${workItems.length} titles, ${notFetched.length} still need fetching`);
+                    } else {
+                        // Batch failed, add all IDs back to remaining for smaller batch size
+                        newRemainingIds.push(...batch);
+                    }
+                } catch (error) {
+                    // Batch failed, add all IDs back to remaining
+                    newRemainingIds.push(...batch);
+                    console.log(`❌ Batch failed, will retry with smaller batches`);
+                }
+                
+                // Add a small delay to avoid overwhelming the API
+                if (i < remainingIds.length - batchSize) {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+            }
+            
+            remainingIds = newRemainingIds;
+            console.log(`📊 After batch size ${batchSize}: ${remainingIds.length} work items still need fetching`);
+        }
+        
+        // OPTIMIZATION 5: Final fallback for stubborn individual items
+        if (remainingIds.length > 0) {
+            console.log(`🔍 Final attempt: fetching ${remainingIds.length} individual work items...`);
+            
+            for (const workItemId of remainingIds) {
+                try {
+                    const workItem = await this.fetchIndividualWorkItem(workItemId);
+                    if (workItem) {
+                        const title = workItem.fields['System.Title'] || '';
+                        actualTitles.set(workItem.id, title);
+                    }
+                } catch (error) {
+                    console.log(`❌ Could not fetch work item ${workItemId}:`, error.message);
+                }
+                
+                // Small delay between individual requests
+                await new Promise(resolve => setTimeout(resolve, 50));
+            }
+        }
     }
 
     // Fetch work items in batch
@@ -300,29 +404,6 @@ export class AzureDevOpsLinkValidator {
         } catch (error) {
             return null;
         }
-    }
-
-    // Find files that contain a specific Azure DevOps link
-    async findFilesWithAzureDevOpsLink(link: AzureDevOpsLink): Promise<string[]> {
-        const affectedFiles: string[] = [];
-        const files = this.app.vault.getMarkdownFiles()
-            .filter(file => file.path.startsWith('Azure DevOps Work Items/'));
-
-        for (const file of files) {
-            try {
-                const content = await this.app.vault.read(file);
-                
-                // Check if this file contains the specific link in its description
-                const descriptionMatch = content.match(/## Description\s*\n\n([\s\S]*?)(?=\n## |---\n\*Last|$)/);
-                if (descriptionMatch && descriptionMatch[1].includes(link.linkText)) {
-                    affectedFiles.push(file.path);
-                }
-            } catch (error) {
-                console.error(`Error reading file ${file.path}:`, error);
-            }
-        }
-
-        return affectedFiles;
     }
 
     // Fix invalid links by updating all affected files
@@ -555,11 +636,14 @@ export class AzureDevOpsLinkValidator {
 class LinkValidationModal extends Modal {
     results: LinkValidationResult[];
     onFix: (results: LinkValidationResult[]) => void;
+    selectedResults: Set<LinkValidationResult> = new Set();
 
     constructor(app: App, results: LinkValidationResult[], onFix: (results: LinkValidationResult[]) => void) {
         super(app);
         this.results = results;
         this.onFix = onFix;
+        // Start with all items selected by default
+        this.selectedResults = new Set(results);
     }
 
     onOpen() {
@@ -571,7 +655,32 @@ class LinkValidationModal extends Modal {
         
         // Summary
         const summary = contentEl.createEl('p');
-        summary.innerHTML = `Found <strong>${this.results.length}</strong> invalid Azure DevOps link${this.results.length !== 1 ? 's' : ''} in description sections that need${this.results.length === 1 ? 's' : ''} to be updated:`;
+        summary.innerHTML = `Found <strong>${this.results.length}</strong> invalid Azure DevOps link${this.results.length !== 1 ? 's' : ''} in description sections. Select which ones to update:`;
+
+        // Select All / Deselect All controls
+        const selectControls = contentEl.createDiv();
+        selectControls.style.marginBottom = '15px';
+        selectControls.style.display = 'flex';
+        selectControls.style.gap = '10px';
+        selectControls.style.alignItems = 'center';
+        
+        const selectAllBtn = selectControls.createEl('button');
+        selectAllBtn.textContent = 'Select All';
+        selectAllBtn.className = 'mod-secondary';
+        selectAllBtn.style.fontSize = '12px';
+        selectAllBtn.style.padding = '4px 8px';
+        
+        const deselectAllBtn = selectControls.createEl('button');
+        deselectAllBtn.textContent = 'Deselect All';
+        deselectAllBtn.className = 'mod-secondary';
+        deselectAllBtn.style.fontSize = '12px';
+        deselectAllBtn.style.padding = '4px 8px';
+        
+        const selectedCount = selectControls.createEl('span');
+        selectedCount.style.marginLeft = '15px';
+        selectedCount.style.fontSize = '12px';
+        selectedCount.style.color = 'var(--text-muted)';
+        this.updateSelectedCount(selectedCount);
 
         // Results container
         const resultsContainer = contentEl.createDiv();
@@ -582,27 +691,46 @@ class LinkValidationModal extends Modal {
         resultsContainer.style.padding = '10px';
         resultsContainer.style.marginBottom = '20px';
 
-        // Display each validation result
-        for (const result of this.results) {
+        // Display each validation result with checkbox
+        this.results.forEach((result, index) => {
             const resultDiv = resultsContainer.createDiv();
             resultDiv.style.marginBottom = '15px';
             resultDiv.style.padding = '10px';
             resultDiv.style.backgroundColor = 'var(--background-secondary)';
             resultDiv.style.borderRadius = '4px';
+            resultDiv.style.position = 'relative';
+
+            // Checkbox container
+            const checkboxContainer = resultDiv.createDiv();
+            checkboxContainer.style.display = 'flex';
+            checkboxContainer.style.alignItems = 'flex-start';
+            checkboxContainer.style.gap = '10px';
+            checkboxContainer.style.marginBottom = '8px';
+
+            // Checkbox
+            const checkbox = checkboxContainer.createEl('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = this.selectedResults.has(result);
+            checkbox.style.marginTop = '2px';
+            checkbox.style.flexShrink = '0';
+            
+            // Content container
+            const contentContainer = checkboxContainer.createDiv();
+            contentContainer.style.flexGrow = '1';
 
             // Work item info
-            const workItemInfo = resultDiv.createEl('div');
+            const workItemInfo = contentContainer.createEl('div');
             workItemInfo.innerHTML = `<strong>Work Item ${result.workItemId}</strong>`;
 
             // URL info
-            const urlInfo = resultDiv.createEl('div');
+            const urlInfo = contentContainer.createEl('div');
             urlInfo.style.fontSize = '11px';
             urlInfo.style.color = 'var(--text-muted)';
             urlInfo.style.marginTop = '2px';
             urlInfo.textContent = result.azureDevOpsUrl;
 
             // Title comparison
-            const titleComparison = resultDiv.createEl('div');
+            const titleComparison = contentContainer.createEl('div');
             titleComparison.style.fontFamily = 'monospace';
             titleComparison.style.fontSize = '12px';
             titleComparison.style.marginTop = '8px';
@@ -614,7 +742,7 @@ class LinkValidationModal extends Modal {
             correctDiv.innerHTML = `<span style="color: var(--text-success);">✅ Correct title:</span> "${result.actualTitle}"`;
 
             // Affected files
-            const filesDiv = resultDiv.createEl('div');
+            const filesDiv = contentContainer.createEl('div');
             filesDiv.style.marginTop = '8px';
             filesDiv.style.fontSize = '11px';
             filesDiv.style.color = 'var(--text-muted)';
@@ -641,7 +769,49 @@ class LinkValidationModal extends Modal {
                     moreItem.style.fontStyle = 'italic';
                 }
             }
-        }
+
+            // Checkbox event handler
+            checkbox.addEventListener('change', () => {
+                if (checkbox.checked) {
+                    this.selectedResults.add(result);
+                    resultDiv.style.backgroundColor = 'var(--background-secondary)';
+                } else {
+                    this.selectedResults.delete(result);
+                    resultDiv.style.backgroundColor = 'var(--background-modifier-border)';
+                }
+                this.updateSelectedCount(selectedCount);
+                this.updateButtons();
+            });
+
+            // Click on result div to toggle checkbox
+            resultDiv.addEventListener('click', (e) => {
+                // Don't toggle if clicking directly on the checkbox
+                if (e.target !== checkbox) {
+                    checkbox.checked = !checkbox.checked;
+                    checkbox.dispatchEvent(new Event('change'));
+                }
+            });
+
+            // Initial styling based on selection
+            if (!this.selectedResults.has(result)) {
+                resultDiv.style.backgroundColor = 'var(--background-modifier-border)';
+            }
+        });
+
+        // Select All / Deselect All event handlers
+        selectAllBtn.addEventListener('click', () => {
+            this.selectedResults = new Set(this.results);
+            this.updateAllCheckboxes(resultsContainer, true);
+            this.updateSelectedCount(selectedCount);
+            this.updateButtons();
+        });
+
+        deselectAllBtn.addEventListener('click', () => {
+            this.selectedResults.clear();
+            this.updateAllCheckboxes(resultsContainer, false);
+            this.updateSelectedCount(selectedCount);
+            this.updateButtons();
+        });
 
         // Buttons
         const buttonContainer = contentEl.createDiv();
@@ -651,20 +821,63 @@ class LinkValidationModal extends Modal {
         buttonContainer.style.marginTop = '15px';
 
         // Cancel button
-        new ButtonComponent(buttonContainer)
-            .setButtonText('Cancel')
-            .onClick(() => {
-                this.close();
-            });
+        const cancelBtn = buttonContainer.createEl('button');
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.className = 'mod-secondary';
+        cancelBtn.addEventListener('click', () => {
+            this.close();
+        });
 
-        // Fix all button
-        new ButtonComponent(buttonContainer)
-            .setButtonText(`Fix All ${this.results.length} Link${this.results.length !== 1 ? 's' : ''}`)
-            .setCta()
-            .onClick(() => {
+        // Fix selected button
+        const fixBtn = buttonContainer.createEl('button');
+        fixBtn.className = 'mod-cta';
+        this.updateButtons = () => {
+            const selectedCount = this.selectedResults.size;
+            if (selectedCount === 0) {
+                fixBtn.textContent = 'No Items Selected';
+                fixBtn.disabled = true;
+                fixBtn.className = 'mod-secondary';
+            } else {
+                fixBtn.textContent = `Fix ${selectedCount} Selected Link${selectedCount !== 1 ? 's' : ''}`;
+                fixBtn.disabled = false;
+                fixBtn.className = 'mod-cta';
+            }
+        };
+        
+        fixBtn.addEventListener('click', () => {
+            if (this.selectedResults.size > 0) {
                 this.close();
-                this.onFix(this.results);
-            });
+                this.onFix(Array.from(this.selectedResults));
+            }
+        });
+
+        // Initial button state
+        this.updateButtons();
+    }
+
+    updateSelectedCount(selectedCountEl: HTMLElement) {
+        const selectedCount = this.selectedResults.size;
+        const totalCount = this.results.length;
+        selectedCountEl.textContent = `${selectedCount} of ${totalCount} selected`;
+    }
+
+    updateAllCheckboxes(container: HTMLElement, checked: boolean) {
+        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+        const resultDivs = container.querySelectorAll('div[style*="background-color"]');
+        
+        checkboxes.forEach((checkbox, index) => {
+            (checkbox as HTMLInputElement).checked = checked;
+            const resultDiv = resultDivs[index] as HTMLElement;
+            if (resultDiv) {
+                resultDiv.style.backgroundColor = checked ? 
+                    'var(--background-secondary)' : 
+                    'var(--background-modifier-border)';
+            }
+        });
+    }
+
+    updateButtons() {
+        // This will be set in onOpen()
     }
 
     onClose() {
