@@ -3,7 +3,6 @@ import { AzureDevOpsAPI } from './api';
 import { AzureDevOpsSettings } from './settings';
 import { marked } from 'marked';
 
-// Use require for TurndownService to avoid TypeScript module issues
 const TurndownService = require('turndown');
 const turndownPluginGfm = require('turndown-plugin-gfm');
 
@@ -31,10 +30,8 @@ export class WorkItemManager {
     settings: AzureDevOpsSettings;
     plugin: any;
     
-    // Cache for related work item details to avoid repeated API calls
     private relatedItemsCache = new Map<number, RelatedWorkItem>();
     
-    // HTML to Markdown converter
     private turndownService: any;
     
     constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings, plugin: any) {
@@ -62,7 +59,6 @@ export class WorkItemManager {
         
         this.configureTurndownRules();
         
-        // Add GitHub Flavored Markdown support
         const gfm = turndownPluginGfm.gfm;
         this.turndownService.use(gfm);
     }
@@ -278,7 +274,6 @@ export class WorkItemManager {
             // Smart tree view refresh - only reset baselines for items we actually pulled
             const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
             if (treeView) {
-                console.log('🔄 Updating baselines for pulled work items only...');
                 
                 // Get IDs of work items that were actually processed
                 const pulledWorkItemIds = new Set(workItems.map(wi => wi.id));
@@ -288,7 +283,6 @@ export class WorkItemManager {
                     for (const workItemId of pulledWorkItemIds) {
                         treeView.changedNotes.delete(workItemId);
                     }
-                    console.log(`📊 Cleared pending changes for ${pulledWorkItemIds.size} pulled work items`);
                 }
                 
                 // Only clear relationship changes for work items we actually pulled
@@ -308,11 +302,6 @@ export class WorkItemManager {
                             treeView.originalNoteContent.set(workItem.id, content);
                         } catch (error) {
                             console.error(`Error setting baseline for work item ${workItem.id}:`, error);
-                        }
-                        
-                        // Show progress for large pulls
-                        if (index % 100 === 0 && workItems.length > 200) {
-                            console.log(`Set baselines for ${index + 1}/${workItems.length} work items`);
                         }
                     }
                 }
@@ -336,7 +325,6 @@ export class WorkItemManager {
         }
     }
 
-    // Push a specific work item to Azure DevOps
     async pushSpecificWorkItem(file: TFile): Promise<boolean> {
         const loadingNotice = new Notice('🔄 Pushing to Azure DevOps...', 0);
         
@@ -398,7 +386,6 @@ export class WorkItemManager {
         }
     }
 
-    // Pull a specific work item from Azure DevOps
     async pullSpecificWorkItem(file: TFile): Promise<boolean> {
         const loadingNotice = new Notice('🔄 Pulling from Azure DevOps...', 0);
         
@@ -438,7 +425,6 @@ export class WorkItemManager {
             loadingNotice.hide();
             new Notice(`✅ Work item ${workItemId} pulled successfully`);
 
-            // Update specific work item changes in tree view
             const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
             if (treeView) {
                 if (typeof treeView.updateSingleNodeAfterPull === 'function') {
@@ -456,7 +442,6 @@ export class WorkItemManager {
         }
     }
 
-    // Push current active work item
     async pushCurrentWorkItem(): Promise<boolean> {
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile) {
@@ -467,7 +452,6 @@ export class WorkItemManager {
         return await this.pushSpecificWorkItem(activeFile);
     }
 
-    // Navigate to work item in tree view
     async navigateToWorkItemInTree(workItemId: number, highlight: boolean = true) {
         const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
         if (treeView && typeof treeView.scrollToWorkItem === 'function') {
@@ -477,7 +461,6 @@ export class WorkItemManager {
         }
     }
 
-    // Create markdown content for a work item
     async createWorkItemNote(workItem: any): Promise<string> {
         const fields = workItem.fields;
         const id = workItem.id;
@@ -569,7 +552,6 @@ ${relationshipSections}
         return content;
     }
 
-    // Process work item relationships into organized sections
     private async processWorkItemRelationships(workItem: any): Promise<string> {
         const relations = workItem.relations || [];
         const parentLinks: string[] = [];
@@ -664,7 +646,6 @@ ${relationshipSections}
         return allLinks.length > 0 ? '\n' + allLinks.join('\n') : '\n\n*No additional links or relationships*';
     }
 
-    // Get related work item details with caching
     private async getRelatedWorkItemDetails(relatedId: number): Promise<RelatedWorkItem> {
         if (this.relatedItemsCache.has(relatedId)) {
             return this.relatedItemsCache.get(relatedId)!;
@@ -696,7 +677,6 @@ ${relationshipSections}
         return fallback;
     }
 
-    // Extract custom fields from work item fields
     private extractCustomFields(fields: any): { [key: string]: any } {
         const customFields: { [key: string]: any } = {};
         const systemPrefixes = [
@@ -721,7 +701,6 @@ ${relationshipSections}
         return customFields;
     }
 
-    // Check if field name is legitimate custom field
     private isLegitimateCustomField(fieldName: string): boolean {
         if (!/[a-zA-Z]/.test(fieldName)) return false;
         
@@ -734,7 +713,6 @@ ${relationshipSections}
         return validPatterns.some(pattern => pattern.test(fieldName));
     }
 
-    // Format custom fields for YAML frontmatter
     private formatCustomFieldsForYaml(customFields: { [key: string]: any }): string {
         if (Object.keys(customFields).length === 0) return '';
         
@@ -747,7 +725,6 @@ ${relationshipSections}
         return yaml;
     }
 
-    // Format value for YAML
     private formatValueForYaml(fieldValue: any): string {
         if (typeof fieldValue === 'string') {
             if (fieldValue.length > 200 || fieldValue.includes('<') || fieldValue.includes('\n')) {
@@ -763,7 +740,6 @@ ${relationshipSections}
         return `"${String(fieldValue).replace(/"/g, '\\"')}"`;
     }
 
-    // Format custom fields for markdown display
     private formatCustomFieldsForMarkdown(customFields: { [key: string]: any }): string {
         if (Object.keys(customFields).length === 0) return '';
         
@@ -778,7 +754,6 @@ ${relationshipSections}
         return markdown;
     }
 
-    // Format relation type for display
     private formatRelationType(relationType: string): string {
         const typeMap: { [key: string]: string } = {
             'System.LinkTypes.Related': 'Related',
@@ -799,7 +774,6 @@ ${relationshipSections}
             .trim();
     }
 
-    // Extract updates from note content
     private extractUpdatesFromNote(content: string, frontmatter: string): WorkItemUpdate {
         const updates: WorkItemUpdate = {};
         const frontmatterData = this.parseFrontmatter(frontmatter);
@@ -848,7 +822,6 @@ ${relationshipSections}
         return updates;
     }
 
-    // Parse frontmatter into key-value pairs
     private parseFrontmatter(frontmatter: string): { [key: string]: string } {
         const data: { [key: string]: string } = {};
         const lines = frontmatter.split('\n');
@@ -904,7 +877,6 @@ ${relationshipSections}
         return data;
     }
 
-    // Process description updates for HTML conversion
     private async processDescriptionUpdates(updates: WorkItemUpdate): Promise<WorkItemUpdate> {
         if (updates.needsHtmlConversion && updates.description) {
             updates.description = await this.markdownToHtml(updates.description);
@@ -913,7 +885,6 @@ ${relationshipSections}
         return updates;
     }
 
-    // Convert HTML to Markdown
     private htmlToMarkdown(html: string): string {
         if (!html) return '';
         
@@ -940,7 +911,6 @@ ${relationshipSections}
         }
     }
 
-    // Convert Markdown to HTML with comprehensive table support
     private async markdownToHtml(markdown: string): Promise<string> {
         if (!markdown) return '';
         
@@ -994,7 +964,6 @@ ${relationshipSections}
         }
     }
 
-    // Pre-process markdown to replace tables with HTML before marked processes them
     private preProcessTablesForMarked(markdown: string): string {
         const lines = markdown.split('\n');
         const result: string[] = [];
@@ -1025,7 +994,6 @@ ${relationshipSections}
         return result.join('\n');
     }
 
-    // Process a complete markdown table starting at the given index (improved sizing and styling)
     private processMarkdownTable(lines: string[], startIndex: number): { html: string; nextIndex: number } {
         const tableLines: string[] = [];
         let currentIndex = startIndex;
@@ -1122,7 +1090,6 @@ ${relationshipSections}
         };
     }
 
-    // Process table cell content to handle inline markdown and br tags
     private processTableCellContent(cellContent: string): string {
         if (!cellContent) return '';
         
@@ -1151,7 +1118,6 @@ ${relationshipSections}
         return processed;
     }
 
-    // Parse a table row and extract cell contents
     private parseTableRow(line: string): string[] {
         if (!line.includes('|')) return [];
         
@@ -1171,7 +1137,6 @@ ${relationshipSections}
         return cells;
     }
 
-    // Parse table alignment from separator line (improved detection)
     private parseTableAlignment(separatorLine: string, expectedColumns: number): string[] {
         const cells = this.parseTableRow(separatorLine);
         const alignments: string[] = [];
@@ -1192,7 +1157,6 @@ ${relationshipSections}
         return alignments;
     }
 
-    // Fallback manual conversion for Markdown to HTML (improved with table support)
     private fallbackMarkdownToHtml(markdown: string): string {
         if (!markdown) return '';
         
@@ -1308,7 +1272,6 @@ ${relationshipSections}
             .trim();
     }
 
-    // Process inline markdown elements
     private processInlineMarkdown(text: string): string {
         return text
             .replace(/\\(\[|\])/g, '$1')
@@ -1321,7 +1284,6 @@ ${relationshipSections}
             .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2">');
     }
 
-    // Convert markdown tables to clean HTML tables
     private convertMarkdownTablesToHtml(markdown: string): string {
         const lines = markdown.split('\n');
         const result: string[] = [];
@@ -1348,7 +1310,6 @@ ${relationshipSections}
         return result.join('\n');
     }
 
-    // Fallback HTML to Markdown conversion
     private fallbackHtmlToMarkdown(html: string): string {
         return html
             .replace(/<h([1-6])[^>]*>(.*?)<\/h[1-6]>/gi, (match, level, text) => '\n'.repeat(parseInt(level)) + '#'.repeat(parseInt(level)) + ' ' + text + '\n\n')
@@ -1364,7 +1325,6 @@ ${relationshipSections}
             .trim();
     }
 
-    // Update note with push timestamp
     private async updateNotePushTimestamp(file: TFile, content: string) {
         const timestamp = new Date().toLocaleString();
         
@@ -1383,12 +1343,10 @@ ${relationshipSections}
         await this.app.vault.modify(file, updatedContent);
     }
 
-    // Clear related items cache
     clearRelatedItemsCache() {
         this.relatedItemsCache.clear();
     }
 
-    // Sanitize filename for file system
     sanitizeFileName(title: string): string {
         if (!title) return 'Untitled';
         

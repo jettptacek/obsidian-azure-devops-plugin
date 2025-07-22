@@ -3,7 +3,7 @@ import { WorkItem } from './settings';
 
 // Modal for creating work items with dynamic type loading
 export class WorkItemModal extends Modal {
-    plugin: any; // Main plugin instance
+    plugin: any;
     workItem: WorkItem;
     private workItemTypes: any[] = [];
     private isLoadingTypes: boolean = false;
@@ -15,7 +15,7 @@ export class WorkItemModal extends Modal {
         this.workItem = {
             title: '',
             description: '',
-            workItemType: 'Task' // Default fallback
+            workItemType: 'Task'
         };
     }
 
@@ -196,7 +196,6 @@ export class WorkItemModal extends Modal {
             this.close();
         });
 
-        // Create button
         const createBtn = buttonContainer.createEl('button', {
             text: 'Create Work Item',
             cls: 'mod-cta'
@@ -205,23 +204,20 @@ export class WorkItemModal extends Modal {
             await this.handleCreateWorkItem();
         });
 
-        // Add some styling
         this.addCustomStyles();
     }
 
     private updateTypeDescription(typeName: string) {
         const { contentEl } = this;
         
-        // Remove existing type description
         const existingDesc = contentEl.querySelector('.type-description');
         if (existingDesc) {
             existingDesc.remove();
         }
 
-        // Find the selected type
         const selectedType = this.workItemTypes.find(type => type.name === typeName);
         if (selectedType && selectedType.description) {
-            // Add type description below the dropdown
+
             const typeSettingEl = contentEl.querySelector('.setting-item:nth-child(3)'); // Type is the 2nd setting
             if (typeSettingEl) {
                 const descEl = document.createElement('div');
@@ -238,7 +234,7 @@ export class WorkItemModal extends Modal {
     }
 
     private async handleCreateWorkItem() {
-        // Validate required fields
+
         if (!this.workItem.title || this.workItem.title.trim() === '') {
             new Notice('❌ Title is required');
             return;
@@ -249,7 +245,6 @@ export class WorkItemModal extends Modal {
             return;
         }
 
-        // Show loading state
         const createBtn = this.contentEl.querySelector('.mod-cta') as HTMLButtonElement;
         if (createBtn) {
             createBtn.disabled = true;
@@ -264,11 +259,11 @@ export class WorkItemModal extends Modal {
                 new Notice(`✅ Created ${this.workItem.workItemType}: ${this.workItem.title}`);
                 this.close();
                 
-                // Optional: Navigate to the created work item in tree view if it exists
+ 
                 if (result.id && this.plugin.workItemManager) {
                     setTimeout(() => {
                         this.plugin.workItemManager.navigateToWorkItemInTree(result.id);
-                    }, 1000); // Small delay to allow for tree refresh
+                    }, 1000);
                 }
             } else {
                 new Notice('❌ Failed to create work item');
@@ -277,7 +272,7 @@ export class WorkItemModal extends Modal {
             console.error('Error creating work item:', error);
             new Notice(`❌ Error creating work item: ${error.message}`);
         } finally {
-            // Restore button state
+
             if (createBtn) {
                 createBtn.disabled = false;
                 createBtn.textContent = 'Create Work Item';
@@ -286,7 +281,7 @@ export class WorkItemModal extends Modal {
     }
 
     private addCustomStyles() {
-        // Add some custom styles to improve the modal appearance
+
         if (!document.querySelector('#work-item-modal-styles')) {
             const style = document.createElement('style');
             style.id = 'work-item-modal-styles';
@@ -330,7 +325,6 @@ export class WorkItemModal extends Modal {
     }
 }
 
-// Optional: Enhanced work item creation result interface
 export interface WorkItemCreationResult {
     id?: number;
     url?: string;

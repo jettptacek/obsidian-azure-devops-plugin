@@ -6,14 +6,14 @@ import { AzureDevOpsSettingTab } from './settings-tab';
 import { AzureDevOpsAPI } from './api';
 import { WorkItemManager } from './work-item-manager';
 import { MenuManager } from './menu-manager';
-import { AzureDevOpsLinkValidator } from './link-validator'; // ADD THIS IMPORT
+import { AzureDevOpsLinkValidator } from './link-validator';
 
 export default class AzureDevOpsPlugin extends Plugin {
     settings: AzureDevOpsSettings;
     api: AzureDevOpsAPI;
     workItemManager: WorkItemManager;
     menuManager: MenuManager;
-    linkValidator: AzureDevOpsLinkValidator; // ADD THIS PROPERTY
+    linkValidator: AzureDevOpsLinkValidator;
 
     async onload() {
         await this.loadSettings();
@@ -22,7 +22,7 @@ export default class AzureDevOpsPlugin extends Plugin {
         this.api = new AzureDevOpsAPI(this.settings);
         this.workItemManager = new WorkItemManager(this.app, this.api, this.settings, this);
         this.menuManager = new MenuManager(this.app, this.workItemManager);
-        this.linkValidator = new AzureDevOpsLinkValidator(this.app, this.api, this.settings, this); // ADD THIS LINE
+        this.linkValidator = new AzureDevOpsLinkValidator(this.app, this.api, this.settings, this);
 
         // Register the tree view
         this.registerView(
@@ -43,7 +43,6 @@ export default class AzureDevOpsPlugin extends Plugin {
             this.activateTreeView();
         });
 
-        // ADD THIS NEW RIBBON ICON FOR LINK VALIDATION
         this.addRibbonIcon('link', 'Validate Azure DevOps Links', () => {
             if (!this.settings.organization || !this.settings.project || !this.settings.personalAccessToken) {
                 new Notice('❌ Please configure Azure DevOps settings first');
@@ -83,7 +82,6 @@ export default class AzureDevOpsPlugin extends Plugin {
             callback: () => this.workItemManager.pushCurrentWorkItem()
         });
 
-        // ADD THIS NEW COMMAND FOR LINK VALIDATION
         this.addCommand({
             id: 'validate-azure-devops-links',
             name: 'Validate Azure DevOps Links in Descriptions',
@@ -143,7 +141,6 @@ export default class AzureDevOpsPlugin extends Plugin {
         if (this.workItemManager) {
             this.workItemManager.updateSettings(this.settings);
         }
-        // ADD THIS TO UPDATE LINK VALIDATOR SETTINGS
         if (this.linkValidator) {
             this.linkValidator.settings = this.settings;
         }
@@ -159,13 +156,11 @@ export default class AzureDevOpsPlugin extends Plugin {
         if (this.workItemManager) {
             this.workItemManager.updateSettings(this.settings);
         }
-        // ADD THIS TO UPDATE LINK VALIDATOR SETTINGS
         if (this.linkValidator) {
             this.linkValidator.settings = this.settings;
         }
     }
 
-    // ENHANCED: Create Azure DevOps work item with better integration
     async createWorkItem(workItem: any): Promise<any> {
         try {
             // Validate the work item data
@@ -179,39 +174,31 @@ export default class AzureDevOpsPlugin extends Plugin {
             const result = await this.api.createWorkItem(workItem);
             
             if (result) {
-                // Always create a note for the new work item
                 await this.createNoteForWorkItem(result);
                 
-                // FIXED: Proper type casting for tree view
                 const leaves = this.app.workspace.getLeavesOfType('azure-devops-tree-view');
                 if (leaves.length > 0) {
                     const treeView = leaves[0].view;
                     
-                    // Type-safe check and cast to your specific tree view class
                     if (treeView.getViewType() === 'azure-devops-tree-view') {
-                        const azureTreeView = treeView as any; // Cast to bypass TypeScript
+                        const azureTreeView = treeView as any;
                         
                         if (typeof azureTreeView.addNewWorkItemToTree === 'function') {
-                            // Use optimized add method
                             await azureTreeView.addNewWorkItemToTree(result);
                         } else {
-                            // Fallback to full refresh if optimized method doesn't exist
                             this.refreshTreeView();
                         }
                     } else {
-                        // Fallback if not the right view type
                         this.refreshTreeView();
                     }
                 } else {
-                    // No tree view open, no need to refresh
                     console.log('No tree view open, skipping tree update');
                 }
                 
-                // Navigate to the new work item in tree view if possible
                 if (result.id && this.workItemManager) {
                     setTimeout(() => {
                         this.workItemManager.navigateToWorkItemInTree(result.id);
-                    }, 500); // Reduced delay since no full refresh
+                    }, 500);
                 }
                 
                 return {
@@ -232,7 +219,6 @@ export default class AzureDevOpsPlugin extends Plugin {
         }
     }
 
-    // NEW: Create note for newly created work item
     async createNoteForWorkItem(workItem: any): Promise<void> {
         try {
             const noteContent = await this.workItemManager.createWorkItemNote(workItem);
@@ -241,25 +227,20 @@ export default class AzureDevOpsPlugin extends Plugin {
             const folderPath = 'Azure DevOps Work Items';
             const fullPath = `${folderPath}/${filename}`;
 
-            // Ensure folder exists
             if (!await this.app.vault.adapter.exists(folderPath)) {
                 await this.app.vault.createFolder(folderPath);
             }
 
-            // Create the note
             await this.app.vault.create(fullPath, noteContent);
             console.log(`Created note for new work item: ${filename}`);
         } catch (error) {
             console.error('Error creating note for work item:', error);
-            // Don't throw error here - note creation failure shouldn't fail work item creation
         }
     }
 
-    // Refresh tree view if it's open
     refreshTreeView() {
         const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_AZURE_DEVOPS_TREE);
         leaves.forEach(leaf => {
-            // Type-safe check and cast
             if (leaf.view.getViewType() === VIEW_TYPE_AZURE_DEVOPS_TREE) {
                 const treeView = leaf.view as AzureDevOpsTreeView;
                 treeView.refreshTreeView();
@@ -267,7 +248,6 @@ export default class AzureDevOpsPlugin extends Plugin {
         });
     }
 
-    // Delegate methods to managers
     async getWorkItemsWithRelations(): Promise<any[]> {
         return this.api.getWorkItemsWithRelations();
     }
@@ -286,7 +266,6 @@ export default class AzureDevOpsPlugin extends Plugin {
         return this.workItemManager.sanitizeFileName(title);
     }
 
-    // ADD THIS NEW METHOD TO EXPOSE LINK VALIDATION FUNCTIONALITY
     async validateAzureDevOpsLinks(): Promise<void> {
         return this.linkValidator.validateAllAzureDevOpsLinks();
     }

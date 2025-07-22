@@ -10,7 +10,6 @@ export class MenuManager {
         this.workItemManager = workItemManager;
     }
 
-    // Helper method to check if file is a work item and extract ID
     private async checkWorkItemFile(file: TFile): Promise<number | null> {
         try {
             const content = await this.app.vault.read(file);
@@ -28,10 +27,9 @@ export class MenuManager {
         }
     }
 
-    // Helper method to add Azure DevOps menu items
     addAzureDevOpsMenuItems(menu: any, file: any) {
         if (file instanceof TFile && file.extension === 'md') {
-            // Add Focus in Tree option first
+
             menu.addItem((item: any) => {
                 item
                     .setTitle('Focus in Tree')
@@ -43,15 +41,12 @@ export class MenuManager {
                             return;
                         }
                         
-                        // Navigate to the work item in tree view without highlighting
-                        await this.workItemManager.navigateToWorkItemInTree(workItemId, false);
+                        await this.workItemManager.navigateToWorkItemInTree(workItemId, true);
                     });
             });
 
-            // Add separator before Azure DevOps sync options
             menu.addSeparator();
 
-            // Add the push menu item
             menu.addItem((item: any) => {
                 item
                     .setTitle('Push to Azure DevOps')
@@ -67,7 +62,6 @@ export class MenuManager {
                     });
             });
 
-            // Add the pull menu item
             menu.addItem((item: any) => {
                 item
                     .setTitle('Pull from Azure DevOps')
@@ -83,7 +77,6 @@ export class MenuManager {
                     });
             });
 
-            // Add "View in Azure DevOps" option
             menu.addItem((item: any) => {
                 item
                     .setTitle('View in Azure DevOps')

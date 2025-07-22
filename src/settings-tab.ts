@@ -1,8 +1,7 @@
 import { PluginSettingTab, Setting } from 'obsidian';
 
-// Settings tab
 export class AzureDevOpsSettingTab extends PluginSettingTab {
-    plugin: any; // Main plugin instance
+    plugin: any;
 
     constructor(app: any, plugin: any) {
         super(app, plugin);

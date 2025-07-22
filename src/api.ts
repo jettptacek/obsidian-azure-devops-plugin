@@ -1,14 +1,6 @@
 import { Notice, requestUrl } from 'obsidian';
 import { AzureDevOpsSettings, WorkItem } from './settings';
 
-interface RelationshipChange {
-    action: 'add' | 'remove';
-    relationType?: string;
-    relatedWorkItemId?: number;
-    relationIndex?: number;
-    comment?: string;
-}
-
 interface WorkItemRelation {
     rel: string;
     url: string;
@@ -37,13 +29,9 @@ export class AzureDevOpsAPI {
         return true;
     }
 
-    // UPDATED: Enhanced work item creation method
     async createWorkItem(workItemData: any): Promise<any> {
         if (!this.validateSettings()) return null;
 
-        console.log('Creating work item:', workItemData);
-
-        // Support both old WorkItem interface and new enhanced data structure
         const workItemType = workItemData.workItemType || workItemData.type;
         const title = workItemData.title;
         const description = workItemData.description || '';
@@ -154,7 +142,7 @@ export class AzureDevOpsAPI {
                 return result;
             } else {
                 console.error('API Error:', response.status, response.text);
-                new Notice(`Error ${response.status}: ${response.text}`);
+                new Notice(`API Error ${response.status}`);
                 return null;
             }
         } catch (error) {
@@ -164,7 +152,6 @@ export class AzureDevOpsAPI {
         }
     }
 
-    // UPDATED: Enhanced getWorkItemTypes method with better filtering
     async getWorkItemTypes(): Promise<any[]> {
         if (!this.validateSettings()) return [];
 
@@ -215,7 +202,6 @@ export class AzureDevOpsAPI {
         }
     }
 
-    // NEW: Validate work item creation data
     validateWorkItemData(workItemData: any): { isValid: boolean; errors: string[] } {
         const errors: string[] = [];
         
@@ -243,7 +229,6 @@ export class AzureDevOpsAPI {
         };
     }
 
-    // NEW: Get work item type details including available fields
     async getWorkItemTypeDetails(typeName: string): Promise<any> {
         if (!this.validateSettings()) return null;
 
@@ -271,7 +256,6 @@ export class AzureDevOpsAPI {
         }
     }
 
-    // Get work items with their relationships
     async getWorkItemsWithRelations(): Promise<any[]> {
         if (!this.validateSettings()) return [];
 
@@ -341,7 +325,6 @@ export class AzureDevOpsAPI {
         }
     }
 
-    // Get work items from Azure DevOps (without relations)
     async getWorkItems(): Promise<any[]> {
         if (!this.validateSettings()) return [];
 
@@ -433,7 +416,8 @@ export class AzureDevOpsAPI {
             if (response.status >= 200 && response.status < 300) {
                 return response.json;
             } else {
-                new Notice(`Failed to fetch work item: ${response.status} - ${response.text}`);
+                new Notice(`Failed to fetch work item: ${workItemId} : ${response.status}`);
+                console.error(`Failed to fetch work item: ${response.status} - ${response.text}`);
                 return null;
             }
         } catch (error) {
@@ -552,12 +536,12 @@ export class AzureDevOpsAPI {
             if (response.status >= 200 && response.status < 300) {
                 return true;
             } else {
-                console.error('Update failed with response:', response.text);
-                new Notice(`Push failed: ${response.status} - ${response.text}`);
+                console.error(`Push failed: ${response.status} - ${response.text}`);
+                new Notice(`Push failed: ${response.status}`);
                 return false;
             }
         } catch (error) {
-            console.error('Update request error:', error);
+            console.error('Push failed:', error);
             new Notice(`Push failed: ${error.message}`);
             return false;
         }
@@ -713,14 +697,15 @@ export class AzureDevOpsAPI {
             });
 
             if (response.status >= 200 && response.status < 300) {
-                console.log(`Successfully added parent ${parentId} to child ${childId}`);
                 return true;
             } else {
-                new Notice(`Failed to add parent relationship: ${response.status} - ${response.text}`);
+                new Notice(`Failed to add parent relationship: ${parentId} : ${response.status}`);
+                console.error(`Failed to add parent relationship: ${response.status} - ${response.text}`)
                 return false;
             }
         } catch (error) {
             new Notice(`Error adding parent relationship: ${error.message}`);
+            console.error(`Error adding parent relationship:`, error);
             return false;
         }
     }
@@ -767,7 +752,6 @@ export class AzureDevOpsAPI {
             });
 
             if (response.status >= 200 && response.status < 300) {
-                console.log(`Successfully removed ${parentRelationIndexes.length} parent relationships from ${childId}`);
                 return true;
             } else {
                 console.error(`Failed to remove parent relationships: ${response.status} - ${response.text}`);
@@ -798,7 +782,6 @@ export class AzureDevOpsAPI {
         });
 
         if (relationIndex === -1) {
-            console.log('Parent relationship not found');
             return false;
         }
 
@@ -822,14 +805,16 @@ export class AzureDevOpsAPI {
             });
 
             if (response.status >= 200 && response.status < 300) {
-                console.log(`Successfully removed parent ${parentId} from child ${childId}`);
                 return true;
             } else {
-                new Notice(`Failed to remove parent relationship: ${response.status} - ${response.text}`);
+                
+                new Notice(`Failed to remove parent relationship: ${childId} : ${response.status}`);
+                console.error(`Failed to remove parent relationship: ${response.status} - ${response.text}`);
                 return false;
             }
         } catch (error) {
             new Notice(`Error removing parent relationship: ${error.message}`);
+            console.error(`Error removing parent relationship:`, error);
             return false;
         }
     }

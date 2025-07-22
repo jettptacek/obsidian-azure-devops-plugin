@@ -16,19 +16,17 @@ export class AzureDevOpsTreeView extends ItemView {
     private expandedNodes: Set<number> = new Set();
     private nodeElements: Map<number, HTMLElement> = new Map();
     private virtualScrollContainer: HTMLElement | null = null;
-    private isGlobalExpanded: boolean = true;
     
     // Track relationship changes
     private originalRelationships: Map<number, number | null> = new Map();
     private changedRelationships: Map<number, number | null> = new Map();
-    private hasUnsavedChanges: boolean = false;
 
     // Track content changes in addition to relationship changes
     private originalNoteContent: Map<number, string> = new Map();
     private changedNotes: Set<number> = new Set();
     private fileWatcher: any = null;
 
-    // NEW: Auto-scroll and navigation properties
+    // Auto-scroll and navigation properties
     private activeFileWatcher: any = null;
 
     constructor(leaf: WorkspaceLeaf, plugin: any) {
@@ -37,7 +35,6 @@ export class AzureDevOpsTreeView extends ItemView {
         this.initializeStyles();
     }
 
-    // Initialize CSS styles once
     initializeStyles() {
         if (!document.querySelector('#azure-devops-tree-styles')) {
             const style = document.createElement('style');
@@ -139,7 +136,6 @@ export class AzureDevOpsTreeView extends ItemView {
         return 'git-branch';
     }
 
-    // NEW: Add this method to handle active file changes
     startActiveFileWatcher() {
         if (this.activeFileWatcher) {
             this.app.workspace.offref(this.activeFileWatcher);
@@ -152,7 +148,7 @@ export class AzureDevOpsTreeView extends ItemView {
             }
         });
         
-        // Also watch for file-open events
+        // Watch for file-open events
         this.app.workspace.on('file-open', (file) => {
             if (file) {
                 this.handleActiveFileChange(file);
@@ -163,7 +159,6 @@ export class AzureDevOpsTreeView extends ItemView {
         this.registerEvent(
             this.app.workspace.on('file-open', (file) => {
                 if (file) {
-                    // Small delay to ensure the file is fully loaded
                     setTimeout(() => {
                         this.handleActiveFileChange(file);
                     }, 100);
@@ -172,7 +167,6 @@ export class AzureDevOpsTreeView extends ItemView {
         );
     }
 
-    // NEW: Handle when a file becomes active
     async handleActiveFileChange(file: TFile) {
         // Check if this is a work item file
         if (!file.path.startsWith('Azure DevOps Work Items/') || !file.path.endsWith('.md')) {
@@ -191,25 +185,21 @@ export class AzureDevOpsTreeView extends ItemView {
         await this.scrollToWorkItem(workItemId);
     }
 
-    // NEW: Scroll to a specific work item in the tree
     async scrollToWorkItem(workItemId: number, highlightItem: boolean = true) {
-        // Find the node in our tree
+
         const node = this.allNodes.get(workItemId);
         if (!node) {
-            console.log(`Work item ${workItemId} not found in tree`);
+            console.warn(`Work item ${workItemId} not found in tree`);
             return;
         }
         
-        // Expand all parent nodes to make this node visible
         await this.expandPathToNode(node);
         
-        // Wait a bit for the DOM to update
         await new Promise(resolve => setTimeout(resolve, 100));
         
-        // Find the DOM element for this node
         const nodeElement = this.nodeElements.get(workItemId);
         if (!nodeElement) {
-            console.log(`DOM element for work item ${workItemId} not found`);
+            console.warn(`DOM element for work item ${workItemId} not found`);
             return;
         }
         
@@ -217,25 +207,21 @@ export class AzureDevOpsTreeView extends ItemView {
         this.scrollElementIntoView(nodeElement, highlightItem);
     }
 
-    // NEW: Expand all parent nodes to make the target node visible
     async expandPathToNode(targetNode: WorkItemNode) {
         const pathToRoot: WorkItemNode[] = [];
         let currentNode: WorkItemNode | undefined = targetNode;
         
-        // Build path from target to root
         while (currentNode) {
             pathToRoot.unshift(currentNode);
             currentNode = currentNode.parent;
         }
         
-        // Expand all parent nodes in the path (excluding the target itself)
         for (let i = 0; i < pathToRoot.length - 1; i++) {
             const nodeToExpand = pathToRoot[i];
             
             if (nodeToExpand.children.length > 0 && !this.expandedNodes.has(nodeToExpand.id)) {
                 this.expandedNodes.add(nodeToExpand.id);
                 
-                // Find and update the expand button
                 const nodeElement = this.nodeElements.get(nodeToExpand.id);
                 if (nodeElement) {
                     const expandBtn = nodeElement.querySelector('span');
@@ -244,7 +230,6 @@ export class AzureDevOpsTreeView extends ItemView {
                     }
                 }
                 
-                // Render children if not already rendered
                 const childrenContainer = this.virtualScrollContainer?.querySelector(
                     `.children-container[data-node-id="${nodeToExpand.id}"]`
                 ) as HTMLElement;
@@ -258,54 +243,45 @@ export class AzureDevOpsTreeView extends ItemView {
             }
         }
         
-        // Update toggle button state
         const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
         if (toggleBtn) {
             this.updateToggleButton(toggleBtn);
         }
     }
 
-    // NEW: Scroll element into view with optional highlighting
     scrollElementIntoView(element: HTMLElement, highlightOnScroll: boolean = false) {
         const treeContainer = this.virtualScrollContainer;
         if (!treeContainer) {
             return;
         }
         
-        // Get element and container positions
         const elementRect = element.getBoundingClientRect();
         const containerRect = treeContainer.getBoundingClientRect();
         
-        // Check if element is already visible
         const isElementVisible = (
             elementRect.top >= containerRect.top &&
             elementRect.bottom <= containerRect.bottom
         );
         
         if (!isElementVisible) {
-            // Calculate scroll position to center the element
             const elementTop = element.offsetTop;
             const containerHeight = treeContainer.clientHeight;
             const elementHeight = element.offsetHeight;
             
             const scrollTop = elementTop - (containerHeight / 2) + (elementHeight / 2);
             
-            // Smooth scroll to the element
             treeContainer.scrollTo({
                 top: Math.max(0, scrollTop),
                 behavior: 'smooth'
             });
         }
         
-        // Add highlighting if requested
         if (highlightOnScroll) {
             this.highlightElement(element);
         }
     }
 
-    // NEW: Highlight an element temporarily to draw attention
     highlightElement(element: HTMLElement) {
-        // Add highlighting CSS if not already added
         if (!document.querySelector('#tree-highlight-styles')) {
             const style = document.createElement('style');
             style.id = 'tree-highlight-styles';
@@ -350,19 +326,15 @@ export class AzureDevOpsTreeView extends ItemView {
             document.head.appendChild(style);
         }
         
-        // Store original classes to restore them later
         const hadPendingChange = element.classList.contains('pending-change');
         
-        // Remove any existing highlights
         const existingHighlights = this.containerEl.querySelectorAll('.active-file-highlight, .active-file-fade');
         existingHighlights.forEach(el => {
             el.classList.remove('active-file-highlight', 'active-file-fade');
         });
         
-        // Add highlight class
         element.classList.add('active-file-highlight');
         
-        // Remove highlight after a delay with fade effect
         setTimeout(() => {
             element.classList.remove('active-file-highlight');
             element.classList.add('active-file-fade');
@@ -370,15 +342,13 @@ export class AzureDevOpsTreeView extends ItemView {
             setTimeout(() => {
                 element.classList.remove('active-file-fade');
                 
-                // IMPORTANT: Restore pending-change class if it was there originally
                 if (hadPendingChange) {
                     element.classList.add('pending-change');
                 }
             }, 600);
-        }, 2000); // Highlight for 2 seconds, then fade for 0.6 seconds
+        }, 2000);
     }
 
-    // Check if all expandable nodes are expanded
     areAllExpandableNodesExpanded(): boolean {
         const getAllExpandableNodes = (nodes: WorkItemNode[]): WorkItemNode[] => {
             let expandableNodes: WorkItemNode[] = [];
@@ -395,7 +365,6 @@ export class AzureDevOpsTreeView extends ItemView {
         return allExpandableNodes.length > 0 && allExpandableNodes.every(node => this.expandedNodes.has(node.id));
     }
 
-    // Update toggle button text and title based on current state
     updateToggleButton(button: HTMLElement) {
         if (this.areAllExpandableNodesExpanded()) {
             button.textContent = '▶ Collapse All';
@@ -406,7 +375,6 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    // Toggle between expand all and collapse all
     toggleAll(button: HTMLElement) {
         if (this.areAllExpandableNodesExpanded()) {
             this.collapseAll();
@@ -416,7 +384,6 @@ export class AzureDevOpsTreeView extends ItemView {
         this.updateToggleButton(button);
     }
 
-    // Update push button appearance based on changes
     updatePushButton(button: HTMLElement) {
         const totalChanges = this.changedRelationships.size + this.changedNotes.size;
         const hasAnyChanges = totalChanges > 0;
@@ -442,7 +409,6 @@ export class AzureDevOpsTreeView extends ItemView {
             button.style.backgroundColor = 'var(--interactive-accent)';
             button.style.color = 'var(--text-on-accent)';
             
-            // Add indicator dot
             let indicator = button.querySelector('.change-indicator') as HTMLElement;
             if (!indicator) {
                 indicator = button.createEl('span');
@@ -523,12 +489,10 @@ export class AzureDevOpsTreeView extends ItemView {
         
         await this.buildTreeView(treeContainer);
 
-        // NEW: Start watching for active file changes
         this.startActiveFileWatcher();
     }
 
     async refreshTreeView() {
-        // Store current change state before refresh
         const currentChangedNotes = new Set(this.changedNotes);
         const currentOriginalContent = new Map(this.originalNoteContent);
         
@@ -542,22 +506,6 @@ export class AzureDevOpsTreeView extends ItemView {
             treeContainer.empty();
             await this.buildTreeViewPreservingChanges(treeContainer, currentChangedNotes, currentOriginalContent);
         }
-    }
-
-    async updateSingleNodeAfterPull(workItemId: number) {
-        console.log(`🔄 Fast update for work item ${workItemId} after pull`);
-        
-        // Clear the pending change state for this specific work item
-        this.changedNotes.delete(workItemId);
-        this.changedRelationships.delete(workItemId);
-        
-        // Update the visual state of just this one node
-        await this.updateNodeVisualState(workItemId);
-        
-        // Update push button
-        this.updatePushButtonIfExists();
-        
-        console.log(`✅ Fast update completed for work item ${workItemId}`);
     }
 
     async buildTreeView(container: HTMLElement) {
@@ -577,17 +525,14 @@ export class AzureDevOpsTreeView extends ItemView {
             this.workItemsTree = this.buildWorkItemTree(workItems);
             this.storeOriginalRelationships(this.workItemsTree);
             
-            // Store original note content and detect changes
             await this.storeOriginalNoteContent(this.workItemsTree);
             await this.detectNoteChanges(this.workItemsTree);
             
             this.initializeExpandedState(this.workItemsTree);
             this.renderTreeOptimized(container, this.workItemsTree);
             
-            // Start watching for file changes
             this.startFileWatcher();
             
-            // Update toggle button
             const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
             if (toggleBtn) {
                 this.updateToggleButton(toggleBtn);
@@ -618,22 +563,17 @@ export class AzureDevOpsTreeView extends ItemView {
             this.workItemsTree = this.buildWorkItemTree(workItems);
             this.storeOriginalRelationships(this.workItemsTree);
             
-            // Store original note content only for NEW work items, preserve existing for changed items
             await this.storeOriginalNoteContentPreservingChanges(this.workItemsTree, preservedOriginalContent);
             
-            // Restore the changed notes state
             this.changedNotes = preservedChangedNotes;
             
-            // Re-detect changes for any new work items that weren't being tracked before
             await this.detectNoteChanges(this.workItemsTree);
             
             this.initializeExpandedState(this.workItemsTree);
             this.renderTreeOptimized(container, this.workItemsTree);
             
-            // Start watching for file changes
             this.startFileWatcher();
             
-            // Update toggle button
             const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
             if (toggleBtn) {
                 this.updateToggleButton(toggleBtn);
@@ -647,7 +587,6 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    // Store original note content for change detection
     async storeOriginalNoteContent(nodes: WorkItemNode[]) {
         const storeContent = async (nodeList: WorkItemNode[]) => {
             for (const node of nodeList) {
@@ -659,7 +598,7 @@ export class AzureDevOpsTreeView extends ItemView {
                             this.originalNoteContent.set(node.id, content);
                         }
                     } catch (error) {
-                        console.log(`Could not read file for work item ${node.id}:`, error);
+                        console.warn(`Could not read file for work item ${node.id}:`, error);
                     }
                 }
                 
@@ -672,17 +611,14 @@ export class AzureDevOpsTreeView extends ItemView {
         await storeContent(nodes);
     }
 
-    // Store original content but preserve existing original content for items that have changes
     async storeOriginalNoteContentPreservingChanges(nodes: WorkItemNode[], preservedOriginalContent: Map<number, string>) {
         const storeContent = async (nodeList: WorkItemNode[]) => {
             for (const node of nodeList) {
                 if (node.filePath) {
                     try {
-                        // If we have preserved original content for this work item, use it
                         if (preservedOriginalContent.has(node.id)) {
                             this.originalNoteContent.set(node.id, preservedOriginalContent.get(node.id)!);
                         } else {
-                            // This is a new work item, store its current content as original
                             const file = this.app.vault.getAbstractFileByPath(node.filePath);
                             if (file instanceof TFile) {
                                 const content = await this.app.vault.read(file);
@@ -690,7 +626,7 @@ export class AzureDevOpsTreeView extends ItemView {
                             }
                         }
                     } catch (error) {
-                        console.log(`Could not read file for work item ${node.id}:`, error);
+                        console.warn(`Could not read file for work item ${node.id}:`, error);
                     }
                 }
                 
@@ -703,7 +639,6 @@ export class AzureDevOpsTreeView extends ItemView {
         await storeContent(nodes);
     }
 
-    // Detect which notes have changed
     async detectNoteChanges(nodes: WorkItemNode[]) {
         const detectChanges = async (nodeList: WorkItemNode[]) => {
             for (const node of nodeList) {
@@ -721,7 +656,7 @@ export class AzureDevOpsTreeView extends ItemView {
                             }
                         }
                     } catch (error) {
-                        console.log(`Could not check changes for work item ${node.id}:`, error);
+                        console.warn(`Could not check changes for work item ${node.id}:`, error);
                     }
                 }
                 
@@ -735,16 +670,11 @@ export class AzureDevOpsTreeView extends ItemView {
         await detectChanges(nodes);
     }
 
-    // Compare note content to detect meaningful changes
     hasContentChanged(original: string, current: string): boolean {
-        // Normalize content for comparison (ignore timestamp changes and minor formatting)
         const normalize = (content: string) => {
             return content
-                // Remove "Last pulled/pushed" timestamps as these change automatically
                 .replace(/\*Last (pulled|pushed): .*\*/g, '')
-                // Remove synced timestamp from frontmatter
                 .replace(/synced: .*$/m, '')
-                // Normalize whitespace
                 .replace(/\s+/g, ' ')
                 .trim();
         };
@@ -755,16 +685,13 @@ export class AzureDevOpsTreeView extends ItemView {
         return normalizedOriginal !== normalizedCurrent;
     }
 
-    // Start watching for file changes
     startFileWatcher() {
         if (this.fileWatcher) {
             this.app.vault.offref(this.fileWatcher);
         }
         
         this.fileWatcher = this.app.vault.on('modify', async (file: TFile) => {
-            // Check if this is a work item file
             if (file.path.startsWith('Azure DevOps Work Items/') && file.path.endsWith('.md')) {
-                // Extract work item ID from filename
                 const match = file.name.match(/^WI-(\d+)/);
                 if (match) {
                     const workItemId = parseInt(match[1]);
@@ -774,7 +701,6 @@ export class AzureDevOpsTreeView extends ItemView {
         });
     }
 
-    // Check if a single note has changed
     async checkSingleNoteChange(workItemId: number, file: TFile) {
         try {
             const currentContent = await this.app.vault.read(file);
@@ -789,26 +715,17 @@ export class AzureDevOpsTreeView extends ItemView {
                     this.changedNotes.delete(workItemId);
                 }
                 
-                // Update the visual representation
                 await this.updateNodeVisualState(workItemId);
                 this.updatePushButtonIfExists();
             }
         } catch (error) {
-            console.log(`Error checking changes for work item ${workItemId}:`, error);
+            console.warn(`Error checking changes for work item ${workItemId}:`, error);
         }
     }
 
-    // Update visual state of a specific node
     async updateNodeVisualState(workItemId: number) {
-        const startTime = Date.now();
-        console.log(`⏱️ [VISUAL] Starting updateNodeVisualState for ${workItemId}`);
-        
-        const step1 = Date.now();
         const nodeElement = this.nodeElements.get(workItemId);
-        console.log(`⏱️ [VISUAL] Find node element: ${Date.now() - step1}ms`);
-        
         if (nodeElement) {
-            const step2 = Date.now();
             const hasRelationshipChange = this.changedRelationships.has(workItemId);
             const hasContentChange = this.changedNotes.has(workItemId);
             const hasPendingChanges = hasRelationshipChange || hasContentChange;
@@ -818,19 +735,14 @@ export class AzureDevOpsTreeView extends ItemView {
             } else {
                 nodeElement.classList.remove('pending-change');
             }
-            console.log(`⏱️ [VISUAL] Update classes: ${Date.now() - step2}ms`);
             
-            const step3 = Date.now();
-            // Update the title container to show the appropriate badge
             const titleContainer = nodeElement.querySelector('div[style*="flex-grow"]') as HTMLElement;
             if (titleContainer) {
-                // Remove existing badges
                 const existingBadge = titleContainer.querySelector('.pending-badge');
                 if (existingBadge) {
                     existingBadge.remove();
                 }
                 
-                // Add new badge if needed
                 if (hasPendingChanges) {
                     const badge = document.createElement('span');
                     badge.className = 'pending-badge';
@@ -849,13 +761,7 @@ export class AzureDevOpsTreeView extends ItemView {
                     titleContainer.appendChild(badge);
                 }
             }
-            console.log(`⏱️ [VISUAL] Update badge: ${Date.now() - step3}ms`);
-        } else {
-            console.log(`⏱️ [VISUAL] No node element found for ${workItemId}`);
         }
-        
-        const totalTime = Date.now() - startTime;
-        console.log(`⏱️ [VISUAL] TOTAL updateNodeVisualState: ${totalTime}ms`);
     }
 
     storeOriginalRelationships(nodes: WorkItemNode[]) {
@@ -870,7 +776,6 @@ export class AzureDevOpsTreeView extends ItemView {
         
         this.originalRelationships.clear();
         this.changedRelationships.clear();
-        this.hasUnsavedChanges = false;
         storeRelationships(nodes);
         this.updatePushButtonIfExists();
     }
@@ -891,7 +796,6 @@ export class AzureDevOpsTreeView extends ItemView {
         const nodeMap = new Map<number, WorkItemNode>();
         const rootNodes: WorkItemNode[] = [];
 
-        // Create all nodes
         for (const workItem of workItems) {
             const fields = workItem.fields;
             const node: WorkItemNode = {
@@ -909,7 +813,6 @@ export class AzureDevOpsTreeView extends ItemView {
 
         this.allNodes = nodeMap;
 
-        // Build relationships
         for (const workItem of workItems) {
             const node = nodeMap.get(workItem.id);
             if (!node) continue;
@@ -932,7 +835,6 @@ export class AzureDevOpsTreeView extends ItemView {
             }
         }
 
-        // Get root nodes
         for (const node of nodeMap.values()) {
             if (!node.parent) {
                 rootNodes.push(node);
@@ -1001,10 +903,11 @@ export class AzureDevOpsTreeView extends ItemView {
         row.draggable = true;
         row.dataset.nodeId = node.id.toString();
         
-        // Apply highlighting if this node has ANY pending changes
+        // Always check for current pending changes state
         const hasRelationshipChange = this.changedRelationships.has(node.id);
         const hasContentChange = this.changedNotes.has(node.id);
         
+        // Apply highlighting if there are pending changes
         if (hasRelationshipChange || hasContentChange) {
             row.classList.add('pending-change');
         }
@@ -1014,11 +917,9 @@ export class AzureDevOpsTreeView extends ItemView {
         this.attachDragHandlers(row, node);
         this.attachHoverHandlers(row);
 
-        // Expand/collapse button
         const expandBtn = this.createExpandButton(node);
         row.appendChild(expandBtn);
 
-        // Drag handle
         const dragHandle = document.createElement('span');
         dragHandle.textContent = '⋮⋮';
         dragHandle.style.fontSize = '14px';
@@ -1028,31 +929,25 @@ export class AzureDevOpsTreeView extends ItemView {
         dragHandle.style.flexShrink = '0';
         row.appendChild(dragHandle);
 
-        // Work item type icon
         const iconContainer = this.createIconContainer(node);
         row.appendChild(iconContainer);
 
-        // Work item title
         const titleContainer = this.createTitleElement(node);
         row.appendChild(titleContainer);
 
-        // State badge
         const stateBadge = this.createStateBadge(node);
         row.appendChild(stateBadge);
 
-        // Priority badge
         if (node.priority) {
             const priorityBadge = this.createPriorityBadge(node);
             row.appendChild(priorityBadge);
         }
 
-        // Assignee badge
         if (node.assignedTo && node.assignedTo !== 'Unassigned') {
             const assigneeBadge = this.createAssigneeBadge(node);
             row.appendChild(assigneeBadge);
         }
 
-        // Context menu
         row.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             this.showContextMenu(e, node);
@@ -1097,7 +992,6 @@ export class AzureDevOpsTreeView extends ItemView {
 
         container.appendChild(titleSpan);
 
-        // Add PENDING badge if needed
         const hasRelationshipChange = this.changedRelationships.has(node.id);
         const hasContentChange = this.changedNotes.has(node.id);
         
@@ -1213,7 +1107,7 @@ export class AzureDevOpsTreeView extends ItemView {
 
     addImageErrorHandling(iconImg: HTMLImageElement, iconContainer: HTMLElement, workItemType: string) {
         iconImg.addEventListener('error', () => {
-            console.log(`Failed to display icon for ${workItemType}, falling back to emoji`);
+            console.warn(`Failed to display icon for ${workItemType}, falling back to emoji`);
             iconContainer.empty();
             const emojiIcons: { [key: string]: string } = {
                 'Epic': '🎯', 'Feature': '🚀', 'User Story': '📝', 'Task': '✅', 
@@ -1355,7 +1249,6 @@ export class AzureDevOpsTreeView extends ItemView {
             childrenContainer.style.display = 'block';
         }
 
-        // Update expand button
         const nodeElement = this.nodeElements.get(node.id);
         if (nodeElement) {
             const expandBtn = nodeElement.querySelector('span');
@@ -1364,7 +1257,6 @@ export class AzureDevOpsTreeView extends ItemView {
             }
         }
 
-        // Update toggle button
         const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
         if (toggleBtn) {
             this.updateToggleButton(toggleBtn);
@@ -1392,7 +1284,6 @@ export class AzureDevOpsTreeView extends ItemView {
         };
 
         expandAllNodes(this.workItemsTree);
-        this.isGlobalExpanded = true;
         this.refreshTreeDisplay();
         
         const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
@@ -1403,7 +1294,6 @@ export class AzureDevOpsTreeView extends ItemView {
 
     collapseAll() {
         this.expandedNodes.clear();
-        this.isGlobalExpanded = false;
         this.refreshTreeDisplay();
         
         const toggleBtn = this.containerEl.querySelector('.toggle-all-btn') as HTMLElement;
@@ -1413,7 +1303,6 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     changeParentChild(childNode: WorkItemNode, newParentNode: WorkItemNode) {
-        // Remove from old parent
         if (childNode.parent) {
             const oldParent = childNode.parent;
             oldParent.children = oldParent.children.filter(child => child.id !== childNode.id);
@@ -1421,22 +1310,16 @@ export class AzureDevOpsTreeView extends ItemView {
             this.workItemsTree = this.workItemsTree.filter(node => node.id !== childNode.id);
         }
 
-        // Add to new parent
         newParentNode.children.push(childNode);
         childNode.parent = newParentNode;
 
-        // Track the change
         const originalParentId = this.originalRelationships.get(childNode.id);
         const newParentId = newParentNode.id;
         
         if (originalParentId !== newParentId) {
             this.changedRelationships.set(childNode.id, newParentId);
-            this.hasUnsavedChanges = true;
         } else {
             this.changedRelationships.delete(childNode.id);
-            if (this.changedRelationships.size === 0 && this.changedNotes.size === 0) {
-                this.hasUnsavedChanges = false;
-            }
         }
 
         this.sortNodes(newParentNode.children);
@@ -1497,42 +1380,32 @@ export class AzureDevOpsTreeView extends ItemView {
 
             let successCount = 0;
             let errorCount = 0;
-            const successfulRelationshipChanges: number[] = [];
-            const successfulContentChanges: number[] = [];
 
-            // Push relationship changes
             if (this.changedRelationships.size > 0) {
                 const changedItems = Array.from(this.changedRelationships.entries());
                 
                 for (const [childId, newParentId] of changedItems) {
                     try {
-                        let success = false;
                         if (newParentId !== null) {
-                            success = await this.plugin.api.addParentChildRelationship(childId, newParentId);
+                            const success = await this.plugin.api.addParentChildRelationship(childId, newParentId);
+                            if (success) {
+                                successCount++;
+                            } else {
+                                errorCount++;
+                            }
                         } else {
-                            success = await this.plugin.api.removeAllParentRelationships(childId);
-                        }
-                        
-                        if (success) {
+                            await this.plugin.api.removeAllParentRelationships(childId);
                             successCount++;
-                            successfulRelationshipChanges.push(childId);
-                            console.log(`✅ Successfully pushed relationship change for work item ${childId}`);
-                        } else {
-                            errorCount++;
-                            console.error(`❌ Failed to push relationship change for work item ${childId}`);
                         }
                     } catch (error) {
-                        console.error(`❌ Error updating relationship for work item ${childId}:`, error);
+                        console.error(`Error updating relationship for work item ${childId}:`, error);
                         errorCount++;
                     }
                 }
             }
 
-            // Push content changes
             if (this.changedNotes.size > 0) {
-                const changedNotesList = Array.from(this.changedNotes);
-                
-                for (const workItemId of changedNotesList) {
+                for (const workItemId of this.changedNotes) {
                     try {
                         const node = this.allNodes.get(workItemId);
                         if (node && node.filePath) {
@@ -1541,82 +1414,37 @@ export class AzureDevOpsTreeView extends ItemView {
                                 const success = await this.plugin.workItemManager.pushSpecificWorkItem(file);
                                 if (success) {
                                     successCount++;
-                                    successfulContentChanges.push(workItemId);
-                                    console.log(`✅ Successfully pushed content changes for work item ${workItemId}`);
+                                    const newContent = await this.app.vault.read(file);
+                                    this.originalNoteContent.set(workItemId, newContent);
+                                    this.changedNotes.delete(workItemId);
                                 } else {
                                     errorCount++;
-                                    console.error(`❌ Failed to push content changes for work item ${workItemId}`);
                                 }
                             }
                         }
                     } catch (error) {
-                        console.error(`❌ Error pushing content for work item ${workItemId}:`, error);
+                        console.error(`Error pushing content for work item ${workItemId}:`, error);
                         errorCount++;
                     }
                 }
             }
 
-            // Clear tracking only for successfully pushed items
-            console.log(`🔄 Clearing tracking for ${successfulRelationshipChanges.length} relationship changes and ${successfulContentChanges.length} content changes`);
-            
-            // Clear successful relationship changes
-            for (const workItemId of successfulRelationshipChanges) {
-                this.changedRelationships.delete(workItemId);
-                console.log(`✅ Cleared relationship tracking for work item ${workItemId}`);
-            }
-            
-            // Clear successful content changes and update their baselines
-            for (const workItemId of successfulContentChanges) {
-                this.changedNotes.delete(workItemId);
-                
-                // Update the baseline for this specific work item
-                const node = this.allNodes.get(workItemId);
-                if (node && node.filePath) {
-                    try {
-                        const file = this.app.vault.getAbstractFileByPath(node.filePath);
-                        if (file instanceof TFile) {
-                            const newContent = await this.app.vault.read(file);
-                            this.originalNoteContent.set(workItemId, newContent);
-                            console.log(`✅ Updated baseline for work item ${workItemId}`);
-                        }
-                    } catch (error) {
-                        console.error(`Error updating baseline for work item ${workItemId}:`, error);
-                    }
-                }
-            }
-
-            // Update visual state for all affected items (both successful and failed)
-            const allAffectedItems = [
-                ...Array.from(this.changedRelationships.keys()),
-                ...successfulRelationshipChanges,
-                ...Array.from(this.changedNotes),
-                ...successfulContentChanges
-            ];
-            
-            const uniqueAffectedItems = [...new Set(allAffectedItems)];
-            
-            for (const workItemId of uniqueAffectedItems) {
-                await this.updateNodeVisualState(workItemId);
-            }
-
-            // Update overall state
-            this.hasUnsavedChanges = this.changedRelationships.size > 0 || this.changedNotes.size > 0;
-            this.updatePushButtonIfExists();
-
-            // Show results
             if (errorCount === 0) {
-                new Notice(`✅ Successfully pushed all ${successCount} changes!`);
+                new Notice(`Successfully pushed all changes!`);
+                this.changedRelationships.clear();
+                this.storeOriginalRelationships(this.workItemsTree);
             } else {
-                const remainingChanges = this.changedRelationships.size + this.changedNotes.size;
-                new Notice(`📊 Pushed ${successCount} changes successfully. ${errorCount} failed, ${remainingChanges} still pending. Check console for details.`);
+                new Notice(`Pushed ${successCount} changes, ${errorCount} failed. Check console for details.`);
             }
             
-            // Don't do a full tree refresh - just update the display
-            console.log(`📊 Final state: ${this.changedRelationships.size} relationship changes, ${this.changedNotes.size} content changes still pending`);
+            this.updatePushButtonIfExists();
+            
+            setTimeout(() => {
+                this.refreshTreeView();
+            }, 1000);
 
         } catch (error) {
-            new Notice(`❌ Error pushing changes: ${error.message}`);
-            console.error('Push error:', error);
+            new Notice(`Error pushing changes: ${error.message}`);
         }
     }
 
@@ -1636,7 +1464,6 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    // UPDATED: Context menu without "Focus in Tree" option (moved to note context menus)
     showContextMenu(event: MouseEvent, node: WorkItemNode) {
         const menu = new Menu();
 
@@ -1696,23 +1523,6 @@ export class AzureDevOpsTreeView extends ItemView {
         menu.showAtMouseEvent(event);
     }
 
-    async clearAllPendingChanges() {
-        console.log('🔄 TreeView: Fast clearing all pending changes after pull operation');
-        
-        // Clear all change tracking instantly
-        this.changedNotes.clear();
-        this.changedRelationships.clear();
-        this.hasUnsavedChanges = false;
-        
-        // Clear the original content map - we'll rebuild it lazily as needed
-        this.originalNoteContent.clear();
-        
-        // Update visual state immediately
-        await this.refreshTreeDisplay();
-        this.updatePushButtonIfExists();
-        
-        console.log('✅ TreeView: All pending changes cleared instantly');
-    }
     makeRootItem(node: WorkItemNode) {
         if (node.parent) {
             const oldParent = node.parent;
@@ -1730,12 +1540,8 @@ export class AzureDevOpsTreeView extends ItemView {
         
         if (originalParentId !== newParentId) {
             this.changedRelationships.set(node.id, newParentId);
-            this.hasUnsavedChanges = true;
         } else {
             this.changedRelationships.delete(node.id);
-            if (this.changedRelationships.size === 0 && this.changedNotes.size === 0) {
-                this.hasUnsavedChanges = false;
-            }
         }
 
         this.refreshTreeDisplay();
@@ -1746,152 +1552,29 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     async refreshChangeDetection() {
+        await this.storeOriginalNoteContent(this.workItemsTree);
         await this.detectNoteChanges(this.workItemsTree);
         await this.refreshTreeDisplay();
         this.updatePushButtonIfExists();
     }
 
-    async resetContentBaselines() {
-        console.log('🔄 TreeView: Resetting content baselines after pull/push operation');
-        
-        // Clear all change tracking
-        this.changedNotes.clear();
-        
-        // Re-store original content as the new baseline
-        await this.storeOriginalNoteContent(this.workItemsTree);
-        
-        // Refresh the visual state
-        await this.refreshTreeDisplay();
-        this.updatePushButtonIfExists();
-        
-        console.log('✅ TreeView: Content baselines reset');
-    }
-
-    async handleSuccessfulWorkItemPush(workItemId: number) {
-        console.log(`🔄 Handling successful push for work item ${workItemId}`);
-        
-        // Remove from changed notes if it was there
-        this.changedNotes.delete(workItemId);
-        
-        // Update the baseline for this specific work item
-        const node = this.allNodes.get(workItemId);
-        if (node && node.filePath) {
-            try {
-                const file = this.app.vault.getAbstractFileByPath(node.filePath);
-                if (file instanceof TFile) {
-                    const newContent = await this.app.vault.read(file);
-                    this.originalNoteContent.set(workItemId, newContent);
-                    console.log(`✅ Updated baseline for work item ${workItemId}`);
-                }
-            } catch (error) {
-                console.error(`Error updating baseline for work item ${workItemId}:`, error);
-            }
-        }
-        
-        // Update visual state for this specific item
-        await this.updateNodeVisualState(workItemId);
-        
-        // Update push button
-        this.updatePushButtonIfExists();
-        
-        console.log(`✅ Successfully cleared pending state for work item ${workItemId}`);
-    }
-
     async updateSpecificWorkItemChanges(workItemId: number, file: TFile) {
-        const startTime = Date.now();
-        console.log(`⏱️ [TREE] Starting updateSpecificWorkItemChanges for ${workItemId}`);
-        
         try {
-            const step1 = Date.now();
-            console.log(`🔄 Processing pull update for work item ${workItemId}`);
-            
-            // Update the original content for this specific work item (from pull)
             const newContent = await this.app.vault.read(file);
-            console.log(`⏱️ [TREE] Read file: ${Date.now() - step1}ms`);
-            
-            const step2 = Date.now();
             this.originalNoteContent.set(workItemId, newContent);
             
-            // Clear any pending content changes for this work item since we just pulled fresh data
             this.changedNotes.delete(workItemId);
-            console.log(`⏱️ [TREE] Update tracking: ${Date.now() - step2}ms`);
             
-            const step3 = Date.now();
-            // Update the visual state for this specific node
             await this.updateNodeVisualState(workItemId);
             this.updatePushButtonIfExists();
-            console.log(`⏱️ [TREE] Update visual state: ${Date.now() - step3}ms`);
             
-            const totalTime = Date.now() - startTime;
-            console.log(`⏱️ [TREE] TOTAL updateSpecificWorkItemChanges: ${totalTime}ms`);
-            console.log(`✅ Updated change detection for work item ${workItemId} after pull`);
+            console.log(`Updated change detection for work item ${workItemId}`);
         } catch (error) {
             console.error(`Error updating change detection for work item ${workItemId}:`, error);
-            console.log(`⏱️ [TREE] ERROR after ${Date.now() - startTime}ms`);
-        }
-    }
-
-    async addNewWorkItemToTree(newWorkItem: any) {
-        console.log(`➕ Adding new work item ${newWorkItem.id} to tree`);
-        
-        try {
-            // Create the new node
-            const fields = newWorkItem.fields;
-            const newNode: WorkItemNode = {
-                id: newWorkItem.id,
-                title: fields['System.Title'] || 'Untitled',
-                type: fields['System.WorkItemType'] || 'Unknown',
-                state: fields['System.State'] || 'Unknown',
-                assignedTo: fields['System.AssignedTo']?.displayName || 'Unassigned',
-                priority: fields['Microsoft.VSTS.Common.Priority']?.toString() || '',
-                children: [],
-                filePath: this.getWorkItemFilePath(newWorkItem.id, fields['System.Title'])
-            };
-            
-            // Add to our node map
-            this.allNodes.set(newWorkItem.id, newNode);
-            
-            // Set baseline content for this new item (it's clean since just created)
-            if (newNode.filePath) {
-                try {
-                    const file = this.app.vault.getAbstractFileByPath(newNode.filePath);
-                    if (file instanceof TFile) {
-                        const content = await this.app.vault.read(file);
-                        this.originalNoteContent.set(newWorkItem.id, content);
-                    }
-                } catch (error) {
-                    console.log(`Could not read file for new work item ${newWorkItem.id}:`, error);
-                }
-            }
-            
-            // Determine where to place it in the tree (as root item for now)
-            this.workItemsTree.push(newNode);
-            
-            // Sort the tree to put it in the right position
-            this.sortNodes(this.workItemsTree);
-            
-            // Re-render just the tree structure (much faster than full refresh)
-            const treeContainer = this.containerEl.querySelector('.azure-tree-container') as HTMLElement;
-            if (treeContainer) {
-                // Clear and re-render (still faster than full buildTreeView)
-                this.renderedNodes.clear();
-                this.nodeElements.clear();
-                treeContainer.empty();
-                this.renderTreeOptimized(treeContainer, this.workItemsTree);
-            }
-            
-            console.log(`✅ Successfully added work item ${newWorkItem.id} to tree`);
-            
-        } catch (error) {
-            console.error(`Error adding new work item to tree:`, error);
-            // Fallback to full refresh if optimized add fails
-            console.log('Falling back to full tree refresh...');
-            await this.refreshTreeView();
         }
     }
 
     async onClose() {
-        // NEW: Clean up active file watcher
         if (this.activeFileWatcher) {
             this.app.workspace.offref(this.activeFileWatcher);
             this.activeFileWatcher = null;

@@ -1,4 +1,4 @@
-import { App, Notice, TFile, Modal, ButtonComponent, requestUrl } from 'obsidian';
+import { App, Notice, TFile, Modal, requestUrl } from 'obsidian';
 import { AzureDevOpsAPI } from './api';
 import { AzureDevOpsSettings } from './settings';
 
@@ -20,7 +20,7 @@ interface AzureDevOpsLink {
     workItemId: number;
     displayText: string;
     fullUrl: string;
-    linkText: string; // The full [text](url) part
+    linkText: string;
 }
 
 export class AzureDevOpsLinkValidator {
@@ -36,7 +36,6 @@ export class AzureDevOpsLinkValidator {
         this.plugin = plugin;
     }
 
-    // Main command to validate all Azure DevOps links in descriptions
     async validateAllAzureDevOpsLinks() {
         const loadingNotice = new Notice('🔍 Scanning links... (0% complete)', 0);
         
@@ -106,7 +105,6 @@ export class AzureDevOpsLinkValidator {
         return azureDevOpsLinks;
     }
 
-    // Extract Azure DevOps links from description section only
     extractAzureDevOpsLinksFromContent(content: string, filePath: string): AzureDevOpsLink[] {
         const links: AzureDevOpsLink[] = [];
 
@@ -153,7 +151,6 @@ export class AzureDevOpsLinkValidator {
         return match ? parseInt(match[1]) : 0;
     }
 
-    // Validate Azure DevOps links against actual work item titles
     async validateAzureDevOpsLinks(azureDevOpsLinks: Map<number, AzureDevOpsLink[]>): Promise<LinkValidationResult[]> {
         const invalidLinks: LinkValidationResult[] = [];
         
@@ -166,13 +163,10 @@ export class AzureDevOpsLinkValidator {
         }
 
         const workItemIds = Array.from(referencedWorkItemIds);
-        console.log('🔍 DEBUG: Found work item IDs to validate:', workItemIds.length, 'unique work items');
 
-        // OPTIMIZATION 1: Check if we already have titles from existing notes
         const actualTitles = new Map<number, string>();
         let foundFromNotes = 0;
 
-        // Try to get titles from existing work item notes first (much faster)
         for (const workItemId of workItemIds) {
             const workItemFile = this.app.vault.getMarkdownFiles()
                 .find(file => file.path.startsWith('Azure DevOps Work Items/') && 
@@ -182,10 +176,8 @@ export class AzureDevOpsLinkValidator {
                 try {
                     const content = await this.app.vault.read(workItemFile);
                     
-                    // IMPROVED: Multiple ways to extract the title, with fallbacks
                     let extractedTitle = '';
                     
-                    // Method 1: Extract from frontmatter (most reliable)
                     const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
                     if (frontmatterMatch) {
                         const frontmatter = frontmatterMatch[1];
@@ -195,22 +187,18 @@ export class AzureDevOpsLinkValidator {
                         }
                     }
                     
-                    // Method 2: If no frontmatter title, try the main heading (but be more specific)
                     if (!extractedTitle) {
-                        // Look for the first H1 heading after frontmatter, but not section headers
                         const afterFrontmatter = content.replace(/^---\n[\s\S]*?\n---\n/, '');
                         const headingMatch = afterFrontmatter.match(/^# (.+)$/m);
                         if (headingMatch) {
                             const heading = headingMatch[1].trim();
                             
-                            // Skip if it looks like a section header instead of work item title
                             if (!['Custom Fields', 'Description', 'Links', 'Details', 'Acceptance Criteria'].includes(heading)) {
                                 extractedTitle = heading;
                             }
                         }
                     }
                     
-                    // Method 3: Extract title from filename as last resort
                     if (!extractedTitle) {
                         const fileNameMatch = workItemFile.name.match(/^WI-\d+\s+(.+)\.md$/);
                         if (fileNameMatch) {
@@ -221,32 +209,22 @@ export class AzureDevOpsLinkValidator {
                     if (extractedTitle) {
                         actualTitles.set(workItemId, extractedTitle);
                         foundFromNotes++;
-                        console.log(`📝 Work item ${workItemId}: "${extractedTitle}" (from ${workItemFile.name})`);
                     } else {
-                        console.log(`⚠️ Could not extract title for work item ${workItemId} from ${workItemFile.name}`);
+                        console.error(`Could not extract title for work item ${workItemId} from ${workItemFile.name}`);
                     }
                     
                 } catch (error) {
-                    console.log(`❌ Error reading file for work item ${workItemId}:`, error);
+                    console.error(`Error reading file for work item ${workItemId}:`, error);
                 }
             }
         }
 
-        console.log(`✅ Found ${foundFromNotes} titles from existing notes (fast)`);
-        
-        // OPTIMIZATION 2: Only fetch from API the work items we don't have titles for
         const idsToFetch = workItemIds.filter(id => !actualTitles.has(id));
-        console.log(`🔍 Need to fetch ${idsToFetch.length} work items from Azure DevOps API`);
         
         if (idsToFetch.length > 0) {
-            // OPTIMIZATION 3: Use smart batching that handles failures gracefully
             await this.fetchWorkItemTitlesSmart(idsToFetch, actualTitles);
         }
 
-        console.log(`🔍 DEBUG: Total actual titles collected: ${actualTitles.size} out of ${workItemIds.length}`);
-
-        // OPTIMIZATION: Pre-build a map of links to their source files to avoid repeated searches
-        console.log('🔍 Building link-to-file mapping...');
         const linkToFilesMap = new Map<string, string[]>();
 
         for (const [fileWorkItemId, links] of azureDevOpsLinks) {
@@ -270,23 +248,14 @@ export class AzureDevOpsLinkValidator {
             }
         }
 
-        console.log(`📊 Built mapping for ${linkToFilesMap.size} unique links`);
-
-        // Compare display text with actual titles (now much faster)
+        // Compare display text with actual titles
         let processedCount = 0;
-        for (const [fileWorkItemId, links] of azureDevOpsLinks) {
-            console.log(`🔍 DEBUG: Processing links from file WI-${fileWorkItemId}: ${links.length} links`);
-            
+        for (const [, links] of azureDevOpsLinks) {
+
             for (const link of links) {
                 const actualTitle = actualTitles.get(link.workItemId);
                 
-                console.log(`🔍 DEBUG: Comparing work item ${link.workItemId}:`);
-                console.log(`  - Link text: "${link.displayText}"`);
-                console.log(`  - Actual title: "${actualTitle}"`);
-                console.log(`  - Match: ${link.displayText === actualTitle}`);
-                
                 if (actualTitle && link.displayText !== actualTitle) {
-                    console.log(`🚨 DEBUG: MISMATCH FOUND for work item ${link.workItemId}!`);
                     
                     // Use pre-built mapping instead of searching files
                     const linkKey = `${link.workItemId}:${link.linkText}`;
@@ -300,32 +269,24 @@ export class AzureDevOpsLinkValidator {
                         azureDevOpsUrl: link.fullUrl
                     });
                 } else if (!actualTitle) {
-                    console.log(`⚠️ DEBUG: No actual title found for work item ${link.workItemId} (404 or permission issue)`);
+                    console.warn(`No actual title found for work item ${link.workItemId} (404 or permission issue)`);
                 }
             }
             
             processedCount++;
-            // Show progress for large numbers of files
-            if (processedCount % 50 === 0 || processedCount === azureDevOpsLinks.size) {
-                console.log(`📊 Processed ${processedCount}/${azureDevOpsLinks.size} files`);
-            }
         }
 
-        console.log(`🔍 DEBUG: Found ${invalidLinks.length} invalid links total`);
         return invalidLinks;
     }
 
     async fetchWorkItemTitlesSmart(workItemIds: number[], actualTitles: Map<number, string>) {
         if (workItemIds.length === 0) return;
         
-        // OPTIMIZATION 4: Try progressively smaller batch sizes
         const batchSizes = [50, 25, 10, 5];
         let remainingIds = [...workItemIds];
         
         for (const batchSize of batchSizes) {
             if (remainingIds.length === 0) break;
-            
-            console.log(`🔍 Trying batch size ${batchSize} for ${remainingIds.length} remaining work items...`);
             
             const newRemainingIds: number[] = [];
             
@@ -337,7 +298,6 @@ export class AzureDevOpsLinkValidator {
                     const workItems = await this.fetchWorkItemsBatch(batch);
                     
                     if (workItems.length > 0) {
-                        // Success! Extract titles
                         for (const workItem of workItems) {
                             const title = workItem.fields['System.Title'] || '';
                             actualTitles.set(workItem.id, title);
@@ -348,7 +308,6 @@ export class AzureDevOpsLinkValidator {
                         const notFetched = batch.filter(id => !fetchedIds.has(id));
                         newRemainingIds.push(...notFetched);
                         
-                        console.log(`✅ Batch succeeded: got ${workItems.length} titles, ${notFetched.length} still need fetching`);
                     } else {
                         // Batch failed, add all IDs back to remaining for smaller batch size
                         newRemainingIds.push(...batch);
@@ -356,7 +315,6 @@ export class AzureDevOpsLinkValidator {
                 } catch (error) {
                     // Batch failed, add all IDs back to remaining
                     newRemainingIds.push(...batch);
-                    console.log(`❌ Batch failed, will retry with smaller batches`);
                 }
                 
                 // Add a small delay to avoid overwhelming the API
@@ -366,12 +324,9 @@ export class AzureDevOpsLinkValidator {
             }
             
             remainingIds = newRemainingIds;
-            console.log(`📊 After batch size ${batchSize}: ${remainingIds.length} work items still need fetching`);
         }
         
-        // OPTIMIZATION 5: Final fallback for stubborn individual items
         if (remainingIds.length > 0) {
-            console.log(`🔍 Final attempt: fetching ${remainingIds.length} individual work items...`);
             
             for (const workItemId of remainingIds) {
                 try {
@@ -381,7 +336,7 @@ export class AzureDevOpsLinkValidator {
                         actualTitles.set(workItem.id, title);
                     }
                 } catch (error) {
-                    console.log(`❌ Could not fetch work item ${workItemId}:`, error.message);
+                    console.warn(`Could not fetch work item ${workItemId}:`, error.message);
                 }
                 
                 // Small delay between individual requests
@@ -389,9 +344,6 @@ export class AzureDevOpsLinkValidator {
             }
         }
     }
-
-    // Fetch work items in batch
-    // Replace your fetchWorkItemsBatch method in link-validator.ts with this corrected version
 
     async fetchWorkItemsBatch(workItemIds: number[]): Promise<any[]> {
         if (workItemIds.length === 0) return [];
@@ -445,11 +397,9 @@ export class AzureDevOpsLinkValidator {
         }
     }
 
-    // Fix invalid links by updating all affected files
     async fixInvalidLinks(validationResults: LinkValidationResult[]) {
         const loadingNotice = new Notice('🔧 Fixing invalid Azure DevOps links...', 0);
         
-        console.log(`🔧 DEBUG: Starting to fix ${validationResults.length} validation results`);
         
         try {
             const fileUpdates = new Map<string, FileUpdate>();
@@ -457,25 +407,17 @@ export class AzureDevOpsLinkValidator {
             // Collect all file updates needed
             for (let i = 0; i < validationResults.length; i++) {
                 const result = validationResults[i];
-                console.log(`🔧 DEBUG: Processing result ${i + 1}/${validationResults.length}:`);
-                console.log(`  - Work item: ${result.workItemId}`);
-                console.log(`  - Current title: "${result.currentTitle}"`);
-                console.log(`  - Actual title: "${result.actualTitle}"`);
-                console.log(`  - Affected files: ${result.affectedFiles.length}`);
                 
                 for (let j = 0; j < result.affectedFiles.length; j++) {
                     const filePath = result.affectedFiles[j];
-                    console.log(`  - Processing file ${j + 1}/${result.affectedFiles.length}: ${filePath}`);
                     
                     const file = this.app.vault.getAbstractFileByPath(filePath);
                     if (!(file instanceof TFile)) {
-                        console.log(`  - ❌ File not found or not a TFile: ${filePath}`);
                         continue;
                     }
                     
                     let fileUpdate = fileUpdates.get(filePath);
                     if (!fileUpdate) {
-                        console.log(`  - 📁 Creating new file update for: ${filePath}`);
                         const oldContent = await this.app.vault.read(file);
                         fileUpdate = {
                             file,
@@ -484,13 +426,10 @@ export class AzureDevOpsLinkValidator {
                         };
                         fileUpdates.set(filePath, fileUpdate);
                     } else {
-                        console.log(`  - 📁 Using existing file update for: ${filePath}`);
+                        // Do nothing
                     }
                     
-                    // Log content before update
-                    console.log(`  - 🔍 Looking for link text: "${result.currentTitle}"`);
                     const linkTextExists = fileUpdate.newContent.includes(result.currentTitle);
-                    console.log(`  - 🔍 Link text exists in file: ${linkTextExists}`);
                     
                     if (linkTextExists) {
                         // Replace the link text in the description section
@@ -504,69 +443,48 @@ export class AzureDevOpsLinkValidator {
                         );
                         
                         const wasUpdated = beforeUpdate !== fileUpdate.newContent;
-                        console.log(`  - ✏️ Content was updated: ${wasUpdated}`);
                         
                         if (wasUpdated) {
-                            console.log(`  - ✅ Successfully updated link in: ${filePath}`);
+                            // Do Nothing
                         } else {
-                            console.log(`  - ⚠️ No changes made to: ${filePath} (regex might not have matched)`);
-                            
+
                             // Debug: Show what we're trying to replace
                             const oldLinkPattern = `[${this.escapeRegex(result.currentTitle)}](${this.escapeRegex(result.azureDevOpsUrl)})`;
-                            console.log(`  - 🔍 Trying to match pattern: ${oldLinkPattern}`);
+                            console.warn(`  - 🔍 Trying to match pattern: ${oldLinkPattern}`);
                             
                             // Check if the URL exists in the content
                             const urlExists = fileUpdate.newContent.includes(result.azureDevOpsUrl);
-                            console.log(`  - 🔍 URL exists in content: ${urlExists}`);
+                            console.warn(`  - 🔍 URL exists in content: ${urlExists}`);
                         }
                     } else {
-                        console.log(`  - ⚠️ Link text "${result.currentTitle}" not found in ${filePath}`);
+                        console.warn(`Link text "${result.currentTitle}" not found in ${filePath}`);
                     }
                 }
             }
-
-            console.log(`🔧 DEBUG: Total files to update: ${fileUpdates.size}`);
             
             // Apply all file updates
             let updatedCount = 0;
             for (const [filePath, fileUpdate] of fileUpdates) {
-                console.log(`🔧 DEBUG: Checking if file needs update: ${filePath}`);
-                console.log(`  - Content changed: ${fileUpdate.oldContent !== fileUpdate.newContent}`);
                 
                 if (fileUpdate.oldContent !== fileUpdate.newContent) {
-                    console.log(`  - 💾 Updating file: ${filePath}`);
                     try {
                         await this.app.vault.modify(fileUpdate.file, fileUpdate.newContent);
                         updatedCount++;
-                        console.log(`  - ✅ Successfully updated: ${filePath}`);
                     } catch (error) {
-                        console.log(`  - ❌ Failed to update ${filePath}:`, error);
+                        console.error(`Failed to update ${filePath}:`, error);
                     }
                     loadingNotice.setMessage(`🔧 Updated ${updatedCount} files...`);
                 } else {
-                    console.log(`  - ⏭️ No changes needed for: ${filePath}`);
+                    //Do Nothing
                 }
             }
 
             loadingNotice.hide();
             
-            console.log(`🔧 DEBUG: Final results - Updated ${updatedCount} files out of ${fileUpdates.size} processed`);
-            
             if (updatedCount > 0) {
                 new Notice(`✅ Successfully updated ${validationResults.length} invalid Azure DevOps links in ${updatedCount} files!`);
-                
-                // Refresh tree view if it exists
-                const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
-                if (treeView && typeof treeView.refreshChangeDetection === 'function') {
-                    console.log('🔧 DEBUG: Refreshing tree view after link validator changes...');
-                    
-                    // Just refresh the tree view - DON'T update the baseline
-                    // This will detect the link validator changes as "pending changes" which is what we want
-                    await treeView.refreshChangeDetection();
-                }
             } else {
                 new Notice('No files needed updating');
-                console.log('🔧 DEBUG: No files were actually modified - check the debug logs above');
             }
 
         } catch (error) {
@@ -576,102 +494,66 @@ export class AzureDevOpsLinkValidator {
         }
     }
 
-    // Update Azure DevOps link in content
     updateAzureDevOpsLinkInContent(content: string, oldTitle: string, newTitle: string, workItemId: number, azureUrl: string): string {
-        console.log(`🔧 REGEX DEBUG: Updating link content`);
-        console.log(`  - Old title: "${oldTitle}"`);
-        console.log(`  - New title: "${newTitle}"`);
-        console.log(`  - Azure URL: "${azureUrl}"`);
-        
-        // First, let's try a more flexible approach
-        // Look for the exact link pattern: [oldTitle](azureUrl)
-        
-        // Escape special regex characters in both title and URL
+
         const escapedOldTitle = this.escapeRegex(oldTitle);
         const escapedUrl = this.escapeRegex(azureUrl);
-        
-        console.log(`  - Escaped old title: "${escapedOldTitle}"`);
-        console.log(`  - Escaped URL: "${escapedUrl}"`);
         
         // Create regex pattern to match [oldTitle](azureUrl)
         const linkPattern = new RegExp(`\\[${escapedOldTitle}\\]\\(${escapedUrl}\\)`, 'g');
         
-        console.log(`  - Regex pattern: ${linkPattern.source}`);
-        
-        // Test if the pattern matches
-        const matches = content.match(linkPattern);
-        console.log(`  - Pattern matches found: ${matches ? matches.length : 0}`);
-        
-        if (matches) {
-            console.log(`  - Match examples:`, matches.slice(0, 3));
-        }
-        
         // Create replacement string
         const newLinkPattern = `[${newTitle}](${azureUrl})`;
-        console.log(`  - Replacement pattern: "${newLinkPattern}"`);
-        
+  
         // Perform replacement
         const updatedContent = content.replace(linkPattern, newLinkPattern);
         
         // Check if replacement worked
         const wasReplaced = content !== updatedContent;
-        console.log(`  - Replacement successful: ${wasReplaced}`);
         
         if (!wasReplaced) {
-            // If the main pattern didn't work, try some alternative approaches
-            console.log(`  - 🔍 Main pattern failed, trying alternatives...`);
             
             // Try without escaping special characters in the title (in case escaping is wrong)
             const simplePattern = new RegExp(`\\[${oldTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\]\\([^)]*${workItemId}[^)]*\\)`, 'g');
-            console.log(`  - Alternative pattern 1: ${simplePattern.source}`);
             
             const altMatches = content.match(simplePattern);
             if (altMatches) {
-                console.log(`  - Alternative matches:`, altMatches.slice(0, 3));
                 const altResult = content.replace(simplePattern, newLinkPattern);
                 if (altResult !== content) {
-                    console.log(`  - ✅ Alternative pattern worked!`);
                     return altResult;
                 }
             }
             
             // Try even more flexible pattern - match any link to this work item ID
             const flexiblePattern = new RegExp(`\\[[^\\]]*\\]\\([^)]*${workItemId}[^)]*\\)`, 'g');
-            console.log(`  - Flexible pattern: ${flexiblePattern.source}`);
             
             const flexMatches = content.match(flexiblePattern);
             if (flexMatches) {
-                console.log(`  - Flexible matches:`, flexMatches.slice(0, 3));
                 
                 // For each match, check if it contains our old title
                 let flexResult = content;
                 flexMatches.forEach(match => {
                     if (match.includes(oldTitle)) {
-                        console.log(`  - Replacing flexible match: ${match}`);
                         flexResult = flexResult.replace(match, newLinkPattern);
                     }
                 });
                 
                 if (flexResult !== content) {
-                    console.log(`  - ✅ Flexible pattern worked!`);
                     return flexResult;
                 }
             }
             
-            console.log(`  - ❌ All patterns failed`);
+            console.error(`All patterns failed`);
         }
         
         return updatedContent;
     }
 
-    // Also improve the escapeRegex method to be more robust
     escapeRegex(text: string): string {
-        // Escape all special regex characters
         return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
 }
 
-// Modal to show validation results
 class LinkValidationModal extends Modal {
     results: LinkValidationResult[];
     onFix: (results: LinkValidationResult[]) => void;
