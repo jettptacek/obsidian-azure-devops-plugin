@@ -2,9 +2,9 @@
 	<h1>Azure DevOps Plugin</h1>
 	<b>An <a href="https://obsidian.md/" target="_blank">Obsidian</a> plugin for Azure DevOp Work Item management.</b>
 </div>
+<br>
 
 ![gif](./demos/PullPushDemo.gif)
-</br>
 
 ## ⚡ Key Features
 -  Azure DevOps Work Items Syncization 
