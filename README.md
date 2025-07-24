@@ -3,6 +3,7 @@
 	<b>An <a href="https://obsidian.md/" target="_blank">Obsidian</a> plugin for Azure DevOp Work Item management.</b>
 </div>
 
+![gif](./demos/PullPushDemo.gif)
 </br>
 
 ## ⚡ Key Features
