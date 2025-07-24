@@ -1,5 +1,5 @@
 <div align="center">
-	<h1>Azure DevOps Plugin</h1>
+	<h1>Azure DevOps Backlog</h1>
 	<b>An <a href="https://obsidian.md/" target="_blank">Obsidian</a> plugin for Azure DevOp Work Item management.</b>
 </div>
 <br>
