@@ -1,9 +1,9 @@
 {
     "id": "azure-devops-plugin",
-    "name": "Azure DevOps Backlog",
+    "name": "Azure DevOps Plugin",
     "version": "0.1.0",
     "minAppVersion": "0.15.0",
-    "description": "Create and manage Azure DevOps Work Items from Obsidian",
+    "description": "Create and manage Azure DevOps Work Items in Obsidian",
     "author": "Jett Ptacek",
     "authorUrl": "https://github.com/jettptacek",
     "isDesktopOnly": true,
