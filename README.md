@@ -31,6 +31,10 @@
 - [ ] Table Column Alignment
 - [ ] Tree View Filter and Search
 
+## Libraries Used
+- https://github.com/markedjs/marked
+- https://github.com/mixmark-io/turndown
+
 ## Support
 [!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/jettptacek)
 
