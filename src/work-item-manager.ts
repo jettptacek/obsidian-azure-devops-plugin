@@ -370,6 +370,8 @@ export class WorkItemManager {
                 const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
                 if (treeView && typeof treeView.handleSuccessfulWorkItemPush === 'function') {
                     await treeView.handleSuccessfulWorkItemPush(workItemId);
+                } else if (typeof treeView.updateSpecificWorkItemChanges === 'function') {
+                    await treeView.updateSpecificWorkItemChanges(workItemId, file);
                 }
                 
                 return true;

@@ -1490,6 +1490,8 @@ export class AzureDevOpsTreeView extends ItemView {
                     const file = this.app.vault.getAbstractFileByPath(node.filePath || '');
                     if (file instanceof TFile) {
                         await this.plugin.pullSpecificWorkItem(file);
+                        // Update the cached content after pull
+                        await this.updateSpecificWorkItemChanges(node.id, file);
                     } else {
                         new Notice('Work item note not found. Pull all work items first.');
                     }
@@ -1502,7 +1504,87 @@ export class AzureDevOpsTreeView extends ItemView {
                 .onClick(async () => {
                     const file = this.app.vault.getAbstractFileByPath(node.filePath || '');
                     if (file instanceof TFile) {
-                        await this.plugin.pushSpecificWorkItem(file);
+                        let successCount = 0;
+                        let errorCount = 0;
+                        let operations = 0;
+
+                        // Push parent-child relationship changes if any
+                        if (this.changedRelationships.has(node.id)) {
+                            operations++;
+                            try {
+                                const newParentId = this.changedRelationships.get(node.id);
+                                
+                                if (newParentId !== null) {
+                                    const success = await this.plugin.api.addParentChildRelationship(node.id, newParentId);
+                                    if (success) {
+                                        successCount++;
+                                        this.changedRelationships.delete(node.id);
+                                    } else {
+                                        errorCount++;
+                                    }
+                                } else {
+                                    await this.plugin.api.removeAllParentRelationships(node.id);
+                                    successCount++;
+                                    this.changedRelationships.delete(node.id);
+                                }
+                            } catch (error) {
+                                console.error(`Error updating relationship for work item ${node.id}:`, error);
+                                errorCount++;
+                            }
+                        }
+
+                        // Push content changes if any
+                        if (this.changedNotes.has(node.id)) {
+                            operations++;
+                            try {
+                                const success = await this.plugin.workItemManager.pushSpecificWorkItem(file);
+                                if (success) {
+                                    successCount++;
+                                    // Update the cached content after successful push
+                                    const newContent = await this.app.vault.read(file);
+                                    this.originalNoteContent.set(node.id, newContent);
+                                    this.changedNotes.delete(node.id);
+                                } else {
+                                    errorCount++;
+                                }
+                            } catch (error) {
+                                console.error(`Error pushing content for work item ${node.id}:`, error);
+                                errorCount++;
+                            }
+                        }
+
+                        // If no changes detected, still try to push content
+                        if (operations === 0) {
+                            operations++;
+                            try {
+                                const success = await this.plugin.workItemManager.pushSpecificWorkItem(file);
+                                if (success) {
+                                    successCount++;
+                                    // Update the cached content after successful push
+                                    const newContent = await this.app.vault.read(file);
+                                    this.originalNoteContent.set(node.id, newContent);
+                                    this.changedNotes.delete(node.id);
+                                } else {
+                                    errorCount++;
+                                }
+                            } catch (error) {
+                                console.error(`Error pushing work item ${node.id}:`, error);
+                                errorCount++;
+                            }
+                        }
+
+                        // Update the visual state and UI
+                        await this.updateNodeVisualState(node.id);
+                        this.updatePushButtonIfExists();
+
+                        // Show appropriate notice
+                        if (errorCount === 0) {
+                            new Notice(`Successfully pushed all changes for work item ${node.id}`);
+                        } else if (successCount > 0) {
+                            new Notice(`Partially pushed work item ${node.id}: ${successCount} succeeded, ${errorCount} failed`);
+                        } else {
+                            new Notice(`Failed to push work item ${node.id}`);
+                        }
                     } else {
                         new Notice('Work item note not found.');
                     }
