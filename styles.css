@@ -1,0 +1,621 @@
+/* Azure DevOps Plugin Styles */
+
+/* ===========================================
+   Link Validation Modal Styles
+   =========================================== */
+
+.azure-devops-link-validation-modal {
+    /* Modal container - themes can override these values */
+}
+
+.azure-devops-modal-title {
+    margin-bottom: var(--size-4-4);
+}
+
+.azure-devops-modal-summary {
+    margin-bottom: var(--size-4-6);
+    color: var(--text-normal);
+}
+
+.azure-devops-select-controls {
+    margin-bottom: 15px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.azure-devops-control-btn {
+    font-size: 12px;
+    padding: 4px 8px;
+}
+
+.azure-devops-selected-count {
+    margin-left: 15px;
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.azure-devops-results-container {
+    max-height: 400px;
+    overflow-y: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    padding: 10px;
+    margin-bottom: 20px;
+}
+
+.azure-devops-result-item {
+    margin-bottom: 15px;
+    padding: 10px;
+    background-color: var(--background-secondary);
+    border-radius: 4px;
+    position: relative;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.azure-devops-result-item:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.azure-devops-result-item--unselected {
+    background-color: var(--background-modifier-border);
+}
+
+.azure-devops-checkbox-container {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.azure-devops-checkbox {
+    margin-top: 2px;
+    flex-shrink: 0;
+}
+
+.azure-devops-content-container {
+    flex-grow: 1;
+}
+
+.azure-devops-work-item-info {
+    margin-bottom: 2px;
+}
+
+.azure-devops-url-info {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.azure-devops-title-comparison {
+    font-family: monospace;
+    font-size: 12px;
+    margin-top: 8px;
+}
+
+.azure-devops-current-title {
+    margin-bottom: 4px;
+}
+
+.azure-devops-correct-title {
+    margin-bottom: 4px;
+}
+
+.azure-devops-error-text {
+    color: var(--text-error);
+}
+
+.azure-devops-success-text {
+    color: var(--text-success);
+}
+
+.azure-devops-affected-files {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.azure-devops-files-list {
+    margin-left: 15px;
+    margin-top: 2px;
+}
+
+.azure-devops-file-item {
+    font-size: 10px;
+}
+
+.azure-devops-file-item--more {
+    font-size: 10px;
+    font-style: italic;
+}
+
+.azure-devops-button-container {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 15px;
+}
+
+/* ===========================================
+   Tree View Styles  
+   =========================================== */
+
+.azure-devops-tree-view {
+    /* Main tree view container */
+}
+
+.azure-tree-header {
+    padding: 10px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.azure-tree-title {
+    margin: 0;
+}
+
+.azure-tree-button-container {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.azure-tree-control-btn {
+    font-size: 12px;
+    padding: 4px 8px;
+}
+
+.azure-tree-control-btn.toggle-all-btn {
+    margin-right: 8px;
+}
+
+.azure-tree-push-button {
+    position: relative;
+}
+
+.azure-tree-push-button--has-changes {
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+.azure-tree-change-indicator {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 8px;
+    height: 8px;
+    background-color: #ff4757;
+    border-radius: 50%;
+    font-size: 0;
+    animation: pulse-indicator 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-indicator {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.2); opacity: 0.7; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.azure-tree-container {
+    padding: 10px;
+    overflow-y: auto;
+    max-height: calc(100vh - 100px);
+    position: relative;
+}
+
+.azure-tree-empty-message {
+    text-align: center;
+    color: var(--text-muted);
+}
+
+.azure-tree-error-message {
+    color: var(--text-error);
+    text-align: center;
+}
+
+.azure-tree-row {
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    padding: 4px 0;
+    min-height: 32px;
+    border-radius: 4px;
+    cursor: grab;
+}
+
+.azure-tree-row--hover:not(.azure-tree-pending-change) {
+    background-color: var(--background-modifier-hover);
+}
+
+.azure-tree-row--dragging {
+    opacity: 0.5;
+}
+
+.azure-tree-row--drop-target {
+    border-top: 2px solid var(--interactive-accent);
+}
+
+.azure-tree-pending-change {
+    background-color: #fff3cd !important;
+    border-left: 4px solid #ffc107 !important;
+    border-right: 2px solid #ffc107 !important;
+    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3) !important;
+    transform: translateX(2px) !important;
+    position: relative !important;
+    z-index: 10 !important;
+}
+
+.azure-tree-pending-change::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: #ffc107;
+    animation: pulse-glow 2s ease-in-out infinite alternate;
+}
+
+@keyframes pulse-glow {
+    0% { opacity: 0.6; }
+    100% { opacity: 1; }
+}
+
+.azure-tree-active-file-highlight {
+    background-color: var(--interactive-accent) !important;
+    color: var(--text-on-accent) !important;
+    border-radius: 6px !important;
+    transform: scale(1.02) !important;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2) !important;
+    z-index: 20 !important;
+    position: relative !important;
+    transition: all 0.4s ease !important;
+}
+
+.azure-tree-active-file-highlight .azure-tree-pending-badge {
+    background-color: rgba(255, 255, 255, 0.9) !important;
+    color: var(--interactive-accent) !important;
+    border-color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.azure-tree-active-file-fade {
+    transition: all 0.6s ease !important;
+}
+
+.azure-tree-pending-change.azure-tree-active-file-fade {
+    background-color: #fff3cd !important;
+    border-left: 4px solid #ffc107 !important;
+    border-right: 2px solid #ffc107 !important;
+    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3) !important;
+    transform: translateX(2px) !important;
+    color: var(--text-normal) !important;
+}
+
+.azure-tree-pending-change.azure-tree-active-file-fade .azure-tree-pending-badge {
+    background-color: #ffc107 !important;
+    color: #856404 !important;
+    border-color: #e0a800 !important;
+}
+
+.azure-tree-level-0 { margin-left: 0; }
+.azure-tree-level-1 { margin-left: 20px; }
+.azure-tree-level-2 { margin-left: 40px; }
+.azure-tree-level-3 { margin-left: 60px; }
+.azure-tree-level-4 { margin-left: 80px; }
+.azure-tree-level-5 { margin-left: 100px; }
+
+.azure-tree-expand-button {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-right: 8px;
+    flex-shrink: 0;
+}
+
+.azure-tree-expand-button--expandable {
+    cursor: pointer;
+}
+
+.azure-tree-expand-button--leaf {
+    cursor: default;
+    opacity: 0.5;
+}
+
+.azure-tree-drag-handle {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-right: 8px;
+    cursor: grab;
+    flex-shrink: 0;
+}
+
+.azure-tree-icon-container {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 8px;
+    flex-shrink: 0;
+    font-size: 14px;
+}
+
+.azure-tree-icon-svg {
+    width: 16px;
+    height: 16px;
+}
+
+.azure-tree-icon-image {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+}
+
+.azure-tree-title-container {
+    display: flex;
+    align-items: center;
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-width: 200px;
+    margin-right: 12px;
+}
+
+.azure-tree-title-text {
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text-normal);
+    padding: 4px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.azure-tree-title-text:hover {
+    background-color: var(--interactive-hover);
+    color: var(--interactive-accent);
+}
+
+.azure-tree-pending-badge {
+    background-color: #ffc107 !important;
+    color: #856404 !important;
+    font-size: 10px !important;
+    font-weight: bold !important;
+    padding: 2px 6px !important;
+    border-radius: 10px !important;
+    margin-left: 8px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+    border: 1px solid #e0a800 !important;
+    white-space: nowrap !important;
+}
+
+.azure-tree-pending-badge--relationship {
+    background-color: #17a2b8 !important;
+    color: #0c5460 !important;
+    border-color: #138496 !important;
+}
+
+.azure-tree-pending-badge--content {
+    background-color: #28a745 !important;
+    color: #155724 !important;
+    border-color: #1e7e34 !important;
+}
+
+.azure-tree-pending-badge--both {
+    background-color: #dc3545 !important;
+    color: #721c24 !important;
+    border-color: #bd2130 !important;
+}
+
+.azure-tree-state-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    margin-right: 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.azure-tree-state-badge--active {
+    background-color: #e3f2fd;
+    color: #1976d2;
+}
+
+.azure-tree-state-badge--completed {
+    background-color: #e8f5e8;
+    color: #2e7d32;
+}
+
+.azure-tree-state-badge--removed {
+    background-color: #ffebee;
+    color: #c62828;
+}
+
+.azure-tree-state-badge--default {
+    background-color: var(--background-modifier-border);
+    color: var(--text-muted);
+}
+
+.azure-tree-priority-badge {
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 6px;
+    background-color: var(--background-modifier-border);
+    color: var(--text-muted);
+    font-weight: 600;
+    margin-right: 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.azure-tree-assignee-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-weight: 500;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.azure-tree-children-container {
+    /* Children container styling */
+}
+
+.azure-tree-children-hidden {
+    display: none;
+}
+
+.azure-tree-children-visible {
+    display: block;
+}
+
+/* ===========================================
+   Theme-specific Overrides
+   =========================================== */
+
+/* Dark theme adjustments */
+.theme-dark .azure-devops-result-item--unselected {
+    background-color: var(--background-modifier-border);
+}
+
+/* Light theme adjustments */  
+.theme-light .azure-devops-result-item--unselected {
+    background-color: var(--background-modifier-border);
+}
+
+/* High contrast adjustments */
+.theme-high-contrast .azure-devops-error-text {
+    color: var(--color-red);
+    font-weight: var(--font-weight-bold);
+}
+
+.theme-high-contrast .azure-devops-success-text {
+    color: var(--color-green);
+    font-weight: var(--font-weight-bold);
+}
+
+/* ===========================================
+   Mobile/Responsive Design  
+   =========================================== */
+
+@media (max-width: 768px) {
+    .azure-devops-results-container {
+        max-height: 300px;
+    }
+    
+    .azure-devops-select-controls {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    
+    .azure-devops-button-container {
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .azure-devops-url-info {
+        font-size: 10px;
+    }
+
+    .azure-tree-header {
+        flex-direction: column;
+        gap: 8px;
+        align-items: stretch;
+    }
+
+    .azure-tree-button-container {
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+
+    .azure-tree-title-container {
+        min-width: 200px;
+    }
+
+    .azure-tree-title-text {
+        font-size: 12px;
+    }
+}
+
+/* ===========================================
+   Accessibility  
+   =========================================== */
+
+.azure-devops-checkbox:focus {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.azure-devops-result-item:focus-within {
+    outline: 1px solid var(--color-accent);
+    outline-offset: 1px;
+}
+
+.azure-tree-expand-button--expandable:focus {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.azure-tree-title-text:focus {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+/* ===========================================
+   Custom Scrollbars
+   =========================================== */
+
+.azure-devops-results-container::-webkit-scrollbar,
+.azure-tree-container::-webkit-scrollbar {
+    width: var(--scrollbar-size);
+}
+
+.azure-devops-results-container::-webkit-scrollbar-track,
+.azure-tree-container::-webkit-scrollbar-track {
+    background: var(--background-secondary);
+}
+
+.azure-devops-results-container::-webkit-scrollbar-thumb,
+.azure-tree-container::-webkit-scrollbar-thumb {
+    background: var(--background-modifier-border);
+    border-radius: 4px;
+}
+
+.azure-devops-results-container::-webkit-scrollbar-thumb:hover,
+.azure-tree-container::-webkit-scrollbar-thumb:hover {
+    background: var(--background-modifier-border-hover);
+}
+
+/* ===========================================
+   Print Styles
+   =========================================== */
+
+@media print {
+    .azure-devops-link-validation-modal,
+    .azure-devops-tree-view {
+        background: white !important;
+        color: black !important;
+    }
+    
+    .azure-devops-button-container,
+    .azure-tree-button-container {
+        display: none;
+    }
+
+    .azure-tree-pending-change {
+        border-left: 4px solid #000 !important;
+        background-color: #f5f5f5 !important;
+    }
+}

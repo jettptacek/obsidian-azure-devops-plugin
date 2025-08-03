@@ -32,96 +32,6 @@ export class AzureDevOpsTreeView extends ItemView {
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
         this.plugin = plugin;
-        this.initializeStyles();
-    }
-
-    initializeStyles() {
-        if (!document.querySelector('#azure-devops-tree-styles')) {
-            const style = document.createElement('style');
-            style.id = 'azure-devops-tree-styles';
-            style.textContent = `
-                .azure-tree-row {
-                    transition: all 0.2s ease;
-                }
-                
-                .azure-tree-row.pending-change {
-                    background-color: #fff3cd !important;
-                    border-left: 4px solid #ffc107 !important;
-                    border-right: 2px solid #ffc107 !important;
-                    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3) !important;
-                    transform: translateX(2px) !important;
-                    position: relative !important;
-                    z-index: 10 !important;
-                }
-                
-                .azure-tree-row.pending-change::before {
-                    content: '';
-                    position: absolute;
-                    left: 0;
-                    top: 0;
-                    bottom: 0;
-                    width: 2px;
-                    background: #ffc107;
-                    animation: pulse-glow 2s ease-in-out infinite alternate;
-                }
-                
-                @keyframes pulse-glow {
-                    0% { opacity: 0.6; }
-                    100% { opacity: 1; }
-                }
-                
-                .pending-badge {
-                    background-color: #ffc107 !important;
-                    color: #856404 !important;
-                    font-size: 10px !important;
-                    font-weight: bold !important;
-                    padding: 2px 6px !important;
-                    border-radius: 10px !important;
-                    margin-left: 8px !important;
-                    text-transform: uppercase !important;
-                    letter-spacing: 0.5px !important;
-                    border: 1px solid #e0a800 !important;
-                    white-space: nowrap !important;
-                }
-
-                .pending-badge[title*="relationship"] {
-                    background-color: #17a2b8 !important;
-                    color: #0c5460 !important;
-                    border-color: #138496 !important;
-                }
-
-                .pending-badge[title*="content"] {
-                    background-color: #28a745 !important;
-                    color: #155724 !important;
-                    border-color: #1e7e34 !important;
-                }
-
-                .pending-badge[title*="relationship and content"] {
-                    background-color: #dc3545 !important;
-                    color: #721c24 !important;
-                    border-color: #bd2130 !important;
-                }
-
-                .change-indicator {
-                    position: absolute !important;
-                    top: 2px !important;
-                    right: 2px !important;
-                    width: 8px !important;
-                    height: 8px !important;
-                    background-color: #ff4757 !important;
-                    border-radius: 50% !important;
-                    font-size: 0 !important;
-                    animation: pulse-indicator 1.5s ease-in-out infinite;
-                }
-
-                @keyframes pulse-indicator {
-                    0% { transform: scale(1); opacity: 1; }
-                    50% { transform: scale(1.2); opacity: 0.7; }
-                    100% { transform: scale(1); opacity: 1; }
-                }
-            `;
-            document.head.appendChild(style);
-        }
     }
 
     getViewType(): string {
@@ -186,7 +96,6 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     async scrollToWorkItem(workItemId: number, highlightItem: boolean = true) {
-
         const node = this.allNodes.get(workItemId);
         if (!node) {
             console.warn(`Work item ${workItemId} not found in tree`);
@@ -238,7 +147,7 @@ export class AzureDevOpsTreeView extends ItemView {
                     if (childrenContainer.children.length === 0 && nodeToExpand.children.length > 0) {
                         this.renderTreeOptimized(childrenContainer, nodeToExpand.children, this.getNodeLevel(nodeToExpand) + 1);
                     }
-                    childrenContainer.style.display = 'block';
+                    childrenContainer.addClass('azure-tree-children-visible');
                 }
             }
         }
@@ -282,68 +191,24 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     highlightElement(element: HTMLElement) {
-        if (!document.querySelector('#tree-highlight-styles')) {
-            const style = document.createElement('style');
-            style.id = 'tree-highlight-styles';
-            style.textContent = `
-                .azure-tree-row.active-file-highlight {
-                    background-color: var(--interactive-accent) !important;
-                    color: var(--text-on-accent) !important;
-                    border-radius: 6px !important;
-                    transform: scale(1.02) !important;
-                    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2) !important;
-                    z-index: 20 !important;
-                    position: relative !important;
-                    transition: all 0.4s ease !important;
-                }
-                
-                .azure-tree-row.active-file-highlight .pending-badge {
-                    background-color: rgba(255, 255, 255, 0.9) !important;
-                    color: var(--interactive-accent) !important;
-                    border-color: rgba(255, 255, 255, 0.7) !important;
-                }
-                
-                .azure-tree-row.active-file-fade {
-                    transition: all 0.6s ease !important;
-                }
-                
-                /* IMPORTANT: Ensure pending changes highlighting is preserved after navigation highlight */
-                .azure-tree-row.pending-change.active-file-fade {
-                    background-color: #fff3cd !important;
-                    border-left: 4px solid #ffc107 !important;
-                    border-right: 2px solid #ffc107 !important;
-                    box-shadow: 0 2px 8px rgba(255, 193, 7, 0.3) !important;
-                    transform: translateX(2px) !important;
-                    color: var(--text-normal) !important;
-                }
-                
-                .azure-tree-row.pending-change.active-file-fade .pending-badge {
-                    background-color: #ffc107 !important;
-                    color: #856404 !important;
-                    border-color: #e0a800 !important;
-                }
-            `;
-            document.head.appendChild(style);
-        }
+        const hadPendingChange = element.classList.contains('azure-tree-pending-change');
         
-        const hadPendingChange = element.classList.contains('pending-change');
-        
-        const existingHighlights = this.containerEl.querySelectorAll('.active-file-highlight, .active-file-fade');
+        const existingHighlights = this.containerEl.querySelectorAll('.azure-tree-active-file-highlight, .azure-tree-active-file-fade');
         existingHighlights.forEach(el => {
-            el.classList.remove('active-file-highlight', 'active-file-fade');
+            el.classList.remove('azure-tree-active-file-highlight', 'azure-tree-active-file-fade');
         });
         
-        element.classList.add('active-file-highlight');
+        element.classList.add('azure-tree-active-file-highlight');
         
         setTimeout(() => {
-            element.classList.remove('active-file-highlight');
-            element.classList.add('active-file-fade');
+            element.classList.remove('azure-tree-active-file-highlight');
+            element.classList.add('azure-tree-active-file-fade');
             
             setTimeout(() => {
-                element.classList.remove('active-file-fade');
+                element.classList.remove('azure-tree-active-file-fade');
                 
                 if (hadPendingChange) {
-                    element.classList.add('pending-change');
+                    element.classList.add('azure-tree-pending-change');
                 }
             }, 600);
         }, 2000);
@@ -405,23 +270,18 @@ export class AzureDevOpsTreeView extends ItemView {
             
             button.textContent = buttonText;
             button.title = titleText;
-            button.className = 'mod-warning';
-            button.style.backgroundColor = 'var(--interactive-accent)';
-            button.style.color = 'var(--text-on-accent)';
+            button.className = 'mod-warning azure-tree-push-button azure-tree-push-button--has-changes';
             
-            let indicator = button.querySelector('.change-indicator') as HTMLElement;
+            let indicator = button.querySelector('.azure-tree-change-indicator') as HTMLElement;
             if (!indicator) {
-                indicator = button.createEl('span');
-                indicator.className = 'change-indicator';
+                indicator = button.createEl('span', { cls: 'azure-tree-change-indicator' });
             }
         } else {
             button.textContent = 'Push Changes';
             button.title = 'No pending changes';
-            button.className = 'mod-secondary';
-            button.style.backgroundColor = '';
-            button.style.color = '';
+            button.className = 'mod-secondary azure-tree-push-button';
             
-            const indicator = button.querySelector('.change-indicator');
+            const indicator = button.querySelector('.azure-tree-change-indicator');
             if (indicator) {
                 indicator.remove();
             }
@@ -429,7 +289,7 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     updatePushButtonIfExists() {
-        const pushBtn = this.containerEl.querySelector('.push-changes-btn') as HTMLElement;
+        const pushBtn = this.containerEl.querySelector('.azure-tree-push-button, .azure-tree-push-button--has-changes') as HTMLElement;
         if (pushBtn) {
             this.updatePushButton(pushBtn);
         }
@@ -437,54 +297,41 @@ export class AzureDevOpsTreeView extends ItemView {
 
     async onOpen() {
         this.containerEl.empty();
+        this.containerEl.addClass('azure-devops-tree-view');
         
         // Header
-        const header = this.containerEl.createDiv();
-        header.style.padding = '10px';
-        header.style.borderBottom = '1px solid var(--background-modifier-border)';
-        header.style.display = 'flex';
-        header.style.justifyContent = 'space-between';
-        header.style.alignItems = 'center';
+        const header = this.containerEl.createDiv('azure-tree-header');
         
-        const title = header.createEl('h3');
-        title.textContent = 'Azure DevOps Work Items';
-        title.style.margin = '0';
+        const title = header.createEl('h3', {
+            text: 'Azure DevOps Work Items',
+            cls: 'azure-tree-title'
+        });
         
         // Button container
-        const buttonContainer = header.createDiv();
-        buttonContainer.style.display = 'flex';
-        buttonContainer.style.gap = '8px';
-        buttonContainer.style.alignItems = 'center';
+        const buttonContainer = header.createDiv('azure-tree-button-container');
         
         // Toggle button
-        const toggleBtn = buttonContainer.createEl('button');
-        toggleBtn.className = 'mod-secondary toggle-all-btn';
-        toggleBtn.style.fontSize = '12px';
-        toggleBtn.style.padding = '4px 8px';
-        toggleBtn.style.marginRight = '8px';
+        const toggleBtn = buttonContainer.createEl('button', {
+            cls: 'mod-secondary toggle-all-btn azure-tree-control-btn'
+        });
         this.updateToggleButton(toggleBtn);
         toggleBtn.addEventListener('click', () => this.toggleAll(toggleBtn));
 
-        const refreshBtn = buttonContainer.createEl('button');
-        refreshBtn.textContent = 'Refresh';
-        refreshBtn.className = 'mod-cta';
+        const refreshBtn = buttonContainer.createEl('button', {
+            text: 'Refresh',
+            cls: 'mod-cta azure-tree-control-btn'
+        });
         refreshBtn.addEventListener('click', () => this.refreshTreeView());
 
-        const pushChangesBtn = buttonContainer.createEl('button');
-        pushChangesBtn.textContent = 'Push Changes';
-        pushChangesBtn.className = 'mod-warning push-changes-btn';
-        pushChangesBtn.style.position = 'relative';
+        const pushChangesBtn = buttonContainer.createEl('button', {
+            text: 'Push Changes',
+            cls: 'mod-warning azure-tree-push-button'
+        });
         this.updatePushButton(pushChangesBtn);
         pushChangesBtn.addEventListener('click', () => this.pushAllChanges());
 
         // Tree container
-        const treeContainer = this.containerEl.createDiv();
-        treeContainer.className = 'azure-tree-container';
-        treeContainer.style.padding = '10px';
-        treeContainer.style.overflowY = 'auto';
-        treeContainer.style.maxHeight = 'calc(100vh - 100px)';
-        treeContainer.style.position = 'relative';
-        
+        const treeContainer = this.containerEl.createDiv('azure-tree-container');
         this.virtualScrollContainer = treeContainer;
         
         await this.buildTreeView(treeContainer);
@@ -515,10 +362,10 @@ export class AzureDevOpsTreeView extends ItemView {
             const workItems = await this.plugin.getWorkItemsWithRelations();
             
             if (workItems.length === 0) {
-                const message = container.createEl('p');
-                message.textContent = 'No work items found. Pull work items first.';
-                message.style.textAlign = 'center';
-                message.style.color = 'var(--text-muted)';
+                const message = container.createEl('p', {
+                    text: 'No work items found. Pull work items first.',
+                    cls: 'azure-tree-empty-message'
+                });
                 return;
             }
 
@@ -539,10 +386,10 @@ export class AzureDevOpsTreeView extends ItemView {
             }
             
         } catch (error) {
-            const errorMsg = container.createEl('p');
-            errorMsg.textContent = `Error loading work items: ${error.message}`;
-            errorMsg.style.color = 'var(--text-error)';
-            errorMsg.style.textAlign = 'center';
+            const errorMsg = container.createEl('p', {
+                text: `Error loading work items: ${error.message}`,
+                cls: 'azure-tree-error-message'
+            });
         }
     }
 
@@ -553,10 +400,10 @@ export class AzureDevOpsTreeView extends ItemView {
             const workItems = await this.plugin.getWorkItemsWithRelations();
             
             if (workItems.length === 0) {
-                const message = container.createEl('p');
-                message.textContent = 'No work items found. Pull work items first.';
-                message.style.textAlign = 'center';
-                message.style.color = 'var(--text-muted)';
+                const message = container.createEl('p', {
+                    text: 'No work items found. Pull work items first.',
+                    cls: 'azure-tree-empty-message'
+                });
                 return;
             }
 
@@ -580,10 +427,10 @@ export class AzureDevOpsTreeView extends ItemView {
             }
             
         } catch (error) {
-            const errorMsg = container.createEl('p');
-            errorMsg.textContent = `Error loading work items: ${error.message}`;
-            errorMsg.style.color = 'var(--text-error)';
-            errorMsg.style.textAlign = 'center';
+            const errorMsg = container.createEl('p', {
+                text: `Error loading work items: ${error.message}`,
+                cls: 'azure-tree-error-message'
+            });
         }
     }
 
@@ -731,34 +578,34 @@ export class AzureDevOpsTreeView extends ItemView {
             const hasPendingChanges = hasRelationshipChange || hasContentChange;
             
             if (hasPendingChanges) {
-                nodeElement.classList.add('pending-change');
+                nodeElement.classList.add('azure-tree-pending-change');
             } else {
-                nodeElement.classList.remove('pending-change');
+                nodeElement.classList.remove('azure-tree-pending-change');
             }
             
-            const titleContainer = nodeElement.querySelector('div[style*="flex-grow"]') as HTMLElement;
+            const titleContainer = nodeElement.querySelector('.azure-tree-title-container') as HTMLElement;
             if (titleContainer) {
-                const existingBadge = titleContainer.querySelector('.pending-badge');
+                const existingBadge = titleContainer.querySelector('.azure-tree-pending-badge');
                 if (existingBadge) {
                     existingBadge.remove();
                 }
                 
                 if (hasPendingChanges) {
-                    const badge = document.createElement('span');
-                    badge.className = 'pending-badge';
+                    const badge = titleContainer.createEl('span', { cls: 'azure-tree-pending-badge' });
                     
                     if (hasRelationshipChange && hasContentChange) {
                         badge.textContent = 'PENDING (REL + CONTENT)';
                         badge.title = 'Pending relationship and content changes';
+                        badge.addClass('azure-tree-pending-badge--both');
                     } else if (hasRelationshipChange) {
                         badge.textContent = 'PENDING (REL)';
                         badge.title = 'Pending relationship change';
+                        badge.addClass('azure-tree-pending-badge--relationship');
                     } else {
                         badge.textContent = 'PENDING (CONTENT)';
                         badge.title = 'Pending content changes';
+                        badge.addClass('azure-tree-pending-badge--content');
                     }
-                    
-                    titleContainer.appendChild(badge);
                 }
             }
         }
@@ -874,9 +721,11 @@ export class AzureDevOpsTreeView extends ItemView {
             this.nodeElements.set(node.id, nodeElement);
             
             const childrenContainer = document.createElement('div');
-            childrenContainer.style.display = this.expandedNodes.has(node.id) ? 'block' : 'none';
+            childrenContainer.addClass('azure-tree-children-container');
+            if (!this.expandedNodes.has(node.id)) {
+                childrenContainer.addClass('azure-tree-children-hidden');
+            }
             childrenContainer.dataset.nodeId = node.id.toString();
-            childrenContainer.className = 'children-container';
             
             if (node.children.length > 0) {
                 if (this.expandedNodes.has(node.id)) {
@@ -893,13 +742,7 @@ export class AzureDevOpsTreeView extends ItemView {
     createNodeElement(node: WorkItemNode, level: number): HTMLElement {
         const row = document.createElement('div');
         row.className = 'azure-tree-row';
-        row.style.display = 'flex';
-        row.style.alignItems = 'center';
-        row.style.padding = '4px 0';
-        row.style.marginLeft = `${level * 20}px`;
-        row.style.minHeight = '32px';
-        row.style.borderRadius = '4px';
-        row.style.cursor = 'grab';
+        row.classList.add(`azure-tree-level-${level}`);
         row.draggable = true;
         row.dataset.nodeId = node.id.toString();
         
@@ -909,7 +752,7 @@ export class AzureDevOpsTreeView extends ItemView {
         
         // Apply highlighting if there are pending changes
         if (hasRelationshipChange || hasContentChange) {
-            row.classList.add('pending-change');
+            row.classList.add('azure-tree-pending-change');
         }
         
         (row as any).workItemNode = node;
@@ -920,14 +763,10 @@ export class AzureDevOpsTreeView extends ItemView {
         const expandBtn = this.createExpandButton(node);
         row.appendChild(expandBtn);
 
-        const dragHandle = document.createElement('span');
-        dragHandle.textContent = '⋮⋮';
-        dragHandle.style.fontSize = '14px';
-        dragHandle.style.color = 'var(--text-muted)';
-        dragHandle.style.marginRight = '8px';
-        dragHandle.style.cursor = 'grab';
-        dragHandle.style.flexShrink = '0';
-        row.appendChild(dragHandle);
+        const dragHandle = row.createEl('span', {
+            text: '⋮⋮',
+            cls: 'azure-tree-drag-handle'
+        });
 
         const iconContainer = this.createIconContainer(node);
         row.appendChild(iconContainer);
@@ -959,58 +798,37 @@ export class AzureDevOpsTreeView extends ItemView {
 
     createTitleElement(node: WorkItemNode): HTMLElement {
         const container = document.createElement('div');
-        container.style.display = 'flex';
-        container.style.alignItems = 'center';
-        container.style.flexGrow = '1';
-        container.style.flexShrink = '1';
-        container.style.minWidth = '200px';
-        container.style.marginRight = '12px';
+        container.className = 'azure-tree-title-container';
 
-        const titleSpan = document.createElement('span');
-        titleSpan.textContent = `[${node.id}] ${node.title}`;
-        titleSpan.style.cursor = 'pointer';
-        titleSpan.style.fontWeight = '500';
-        titleSpan.style.color = 'var(--text-normal)';
-        titleSpan.style.padding = '4px 8px';
-        titleSpan.style.borderRadius = '4px';
-        titleSpan.style.whiteSpace = 'nowrap';
-        titleSpan.style.overflow = 'hidden';
-        titleSpan.style.textOverflow = 'ellipsis';
+        const titleSpan = container.createEl('span', {
+            text: `[${node.id}] ${node.title}`,
+            cls: 'azure-tree-title-text'
+        });
 
-        titleSpan.addEventListener('mouseenter', () => {
-            titleSpan.style.backgroundColor = 'var(--interactive-hover)';
-            titleSpan.style.color = 'var(--interactive-accent)';
-        });
-        titleSpan.addEventListener('mouseleave', () => {
-            titleSpan.style.backgroundColor = '';
-            titleSpan.style.color = 'var(--text-normal)';
-        });
         titleSpan.addEventListener('click', (e) => {
             e.stopPropagation();
             this.openWorkItemNote(node);
         });
 
-        container.appendChild(titleSpan);
-
         const hasRelationshipChange = this.changedRelationships.has(node.id);
         const hasContentChange = this.changedNotes.has(node.id);
         
         if (hasRelationshipChange || hasContentChange) {
-            const badge = document.createElement('span');
-            badge.className = 'pending-badge';
+            const badge = container.createEl('span', { cls: 'azure-tree-pending-badge' });
             
             if (hasRelationshipChange && hasContentChange) {
                 badge.textContent = 'PENDING (REL + CONTENT)';
                 badge.title = 'Pending relationship and content changes - will be synced to Azure DevOps';
+                badge.addClass('azure-tree-pending-badge--both');
             } else if (hasRelationshipChange) {
                 badge.textContent = 'PENDING (REL)';
                 badge.title = 'Pending relationship change - will be synced to Azure DevOps';
+                badge.addClass('azure-tree-pending-badge--relationship');
             } else {
                 badge.textContent = 'PENDING (CONTENT)';
                 badge.title = 'Pending content changes - will be synced to Azure DevOps';
+                badge.addClass('azure-tree-pending-badge--content');
             }
-            
-            container.appendChild(badge);
         }
 
         return container;
@@ -1018,27 +836,18 @@ export class AzureDevOpsTreeView extends ItemView {
 
     createExpandButton(node: WorkItemNode): HTMLElement {
         const expandBtn = document.createElement('span');
-        expandBtn.style.width = '20px';
-        expandBtn.style.height = '20px';
-        expandBtn.style.display = 'flex';
-        expandBtn.style.alignItems = 'center';
-        expandBtn.style.justifyContent = 'center';
-        expandBtn.style.cursor = 'pointer';
-        expandBtn.style.fontSize = '12px';
-        expandBtn.style.color = 'var(--text-muted)';
-        expandBtn.style.marginRight = '8px';
-        expandBtn.style.flexShrink = '0';
+        expandBtn.className = 'azure-tree-expand-button';
 
         if (node.children.length > 0) {
             expandBtn.textContent = this.expandedNodes.has(node.id) ? '▼' : '▶';
+            expandBtn.addClass('azure-tree-expand-button--expandable');
             expandBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.toggleNodeOptimized(node);
             });
         } else {
             expandBtn.textContent = '•';
-            expandBtn.style.cursor = 'default';
-            expandBtn.style.opacity = '0.5';
+            expandBtn.addClass('azure-tree-expand-button--leaf');
         }
 
         return expandBtn;
@@ -1046,20 +855,13 @@ export class AzureDevOpsTreeView extends ItemView {
 
     createIconContainer(node: WorkItemNode): HTMLElement {
         const iconContainer = document.createElement('span');
-        iconContainer.style.width = '20px';
-        iconContainer.style.height = '20px';
-        iconContainer.style.display = 'flex';
-        iconContainer.style.alignItems = 'center';
-        iconContainer.style.justifyContent = 'center';
-        iconContainer.style.marginRight = '8px';
-        iconContainer.style.flexShrink = '0';
+        iconContainer.className = 'azure-tree-icon-container';
 
         const iconInfo = this.getWorkItemTypeIcon(node.type);
         if (iconInfo.type === 'image') {
             this.setImageIcon(iconContainer, iconInfo.value, node.type);
         } else {
             iconContainer.textContent = iconInfo.value;
-            iconContainer.style.fontSize = '14px';
             iconContainer.title = node.type;
         }
 
@@ -1079,8 +881,7 @@ export class AzureDevOpsTreeView extends ItemView {
                 if (svgElement && svgElement.tagName === 'svg') {
                     svgElement.setAttribute('width', '16');
                     svgElement.setAttribute('height', '16');
-                    svgElement.style.width = '16px';
-                    svgElement.style.height = '16px';
+                    svgElement.addClass('azure-tree-icon-svg');
                     container.appendChild(svgElement);
                 } else {
                     throw new Error('Invalid SVG content');
@@ -1094,14 +895,12 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     setFallbackImage(container: HTMLElement, iconValue: string, workItemType: string) {
-        const iconImg = document.createElement('img');
+        const iconImg = container.createEl('img', {
+            cls: 'azure-tree-icon-image'
+        });
         iconImg.src = iconValue;
-        iconImg.style.width = '16px';
-        iconImg.style.height = '16px';
-        iconImg.style.objectFit = 'contain';
         iconImg.alt = workItemType;
         iconImg.title = workItemType;
-        container.appendChild(iconImg);
         this.addImageErrorHandling(iconImg, container, workItemType);
     }
 
@@ -1114,7 +913,6 @@ export class AzureDevOpsTreeView extends ItemView {
                 'Bug': '🐛', 'Issue': '⚠️', 'Test Case': '🧪', 'Requirement': '📋'
             };
             iconContainer.textContent = emojiIcons[workItemType] || '📋';
-            iconContainer.style.fontSize = '14px';
             iconContainer.title = workItemType;
         });
     }
@@ -1122,28 +920,17 @@ export class AzureDevOpsTreeView extends ItemView {
     createStateBadge(node: WorkItemNode): HTMLElement {
         const stateBadge = document.createElement('span');
         stateBadge.textContent = node.state;
-        stateBadge.style.fontSize = '10px';
-        stateBadge.style.padding = '2px 6px';
-        stateBadge.style.borderRadius = '10px';
-        stateBadge.style.fontWeight = '600';
-        stateBadge.style.textTransform = 'uppercase';
-        stateBadge.style.marginRight = '6px';
-        stateBadge.style.flexShrink = '0';
-        stateBadge.style.whiteSpace = 'nowrap';
+        stateBadge.className = 'azure-tree-state-badge';
         
         const stateKey = node.state.toLowerCase().replace(/\s+/g, '-');
         if (['new', 'active', 'to-do'].includes(stateKey)) {
-            stateBadge.style.backgroundColor = '#e3f2fd';
-            stateBadge.style.color = '#1976d2';
+            stateBadge.addClass('azure-tree-state-badge--active');
         } else if (['resolved', 'closed', 'done'].includes(stateKey)) {
-            stateBadge.style.backgroundColor = '#e8f5e8';
-            stateBadge.style.color = '#2e7d32';
+            stateBadge.addClass('azure-tree-state-badge--completed');
         } else if (stateKey === 'removed') {
-            stateBadge.style.backgroundColor = '#ffebee';
-            stateBadge.style.color = '#c62828';
+            stateBadge.addClass('azure-tree-state-badge--removed');
         } else {
-            stateBadge.style.backgroundColor = 'var(--background-modifier-border)';
-            stateBadge.style.color = 'var(--text-muted)';
+            stateBadge.addClass('azure-tree-state-badge--default');
         }
 
         return stateBadge;
@@ -1152,42 +939,27 @@ export class AzureDevOpsTreeView extends ItemView {
     createPriorityBadge(node: WorkItemNode): HTMLElement {
         const priorityBadge = document.createElement('span');
         priorityBadge.textContent = `P${node.priority}`;
-        priorityBadge.style.fontSize = '10px';
-        priorityBadge.style.padding = '2px 6px';
-        priorityBadge.style.borderRadius = '6px';
-        priorityBadge.style.backgroundColor = 'var(--background-modifier-border)';
-        priorityBadge.style.color = 'var(--text-muted)';
-        priorityBadge.style.fontWeight = '600';
-        priorityBadge.style.marginRight = '6px';
-        priorityBadge.style.flexShrink = '0';
-        priorityBadge.style.whiteSpace = 'nowrap';
+        priorityBadge.className = 'azure-tree-priority-badge';
         return priorityBadge;
     }
 
     createAssigneeBadge(node: WorkItemNode): HTMLElement {
         const assigneeBadge = document.createElement('span');
         assigneeBadge.textContent = node.assignedTo.split(' ')[0];
-        assigneeBadge.style.fontSize = '10px';
-        assigneeBadge.style.padding = '2px 8px';
-        assigneeBadge.style.borderRadius = '10px';
-        assigneeBadge.style.backgroundColor = 'var(--interactive-accent)';
-        assigneeBadge.style.color = 'var(--text-on-accent)';
-        assigneeBadge.style.fontWeight = '500';
-        assigneeBadge.style.flexShrink = '0';
-        assigneeBadge.style.whiteSpace = 'nowrap';
+        assigneeBadge.className = 'azure-tree-assignee-badge';
         return assigneeBadge;
     }
 
     attachDragHandlers(row: HTMLElement, node: WorkItemNode) {
         row.addEventListener('dragstart', (e) => {
             this.draggedNode = node;
-            row.style.opacity = '0.5';
+            row.addClass('azure-tree-row--dragging');
             e.dataTransfer!.effectAllowed = 'move';
             e.dataTransfer!.setData('text/plain', node.id.toString());
         });
 
         row.addEventListener('dragend', () => {
-            row.style.opacity = '1';
+            row.removeClass('azure-tree-row--dragging');
             this.draggedNode = null;
             this.removeAllDropIndicators();
         });
@@ -1217,28 +989,26 @@ export class AzureDevOpsTreeView extends ItemView {
 
     attachHoverHandlers(row: HTMLElement) {
         row.addEventListener('mouseenter', () => {
-            if (!this.draggedNode && !row.classList.contains('pending-change')) {
-                row.style.backgroundColor = 'var(--background-modifier-hover)';
+            if (!this.draggedNode && !row.classList.contains('azure-tree-pending-change')) {
+                row.addClass('azure-tree-row--hover');
             }
         });
         row.addEventListener('mouseleave', () => {
-            if (!this.draggedNode && !row.classList.contains('pending-change')) {
-                row.style.backgroundColor = '';
-            }
+            row.removeClass('azure-tree-row--hover');
         });
     }
 
     toggleNodeOptimized(node: WorkItemNode) {
         const isExpanded = this.expandedNodes.has(node.id);
         const childrenContainer = this.virtualScrollContainer?.querySelector(
-            `.children-container[data-node-id="${node.id}"]`
+            `.azure-tree-children-container[data-node-id="${node.id}"]`
         ) as HTMLElement;
         
         if (!childrenContainer) return;
 
         if (isExpanded) {
             this.expandedNodes.delete(node.id);
-            childrenContainer.style.display = 'none';
+            childrenContainer.addClass('azure-tree-children-hidden');
         } else {
             this.expandedNodes.add(node.id);
             
@@ -1246,12 +1016,12 @@ export class AzureDevOpsTreeView extends ItemView {
                 this.renderTreeOptimized(childrenContainer, node.children, this.getNodeLevel(node) + 1);
             }
             
-            childrenContainer.style.display = 'block';
+            childrenContainer.removeClass('azure-tree-children-hidden');
         }
 
         const nodeElement = this.nodeElements.get(node.id);
         if (nodeElement) {
-            const expandBtn = nodeElement.querySelector('span');
+            const expandBtn = nodeElement.querySelector('.azure-tree-expand-button');
             if (expandBtn && node.children.length > 0) {
                 expandBtn.textContent = this.expandedNodes.has(node.id) ? '▼' : '▶';
             }
@@ -1343,16 +1113,16 @@ export class AzureDevOpsTreeView extends ItemView {
 
     showDropIndicator(element: HTMLElement, show: boolean) {
         if (show) {
-            element.style.borderTop = '2px solid var(--interactive-accent)';
+            element.addClass('azure-tree-row--drop-target');
         } else {
-            element.style.borderTop = '';
+            element.removeClass('azure-tree-row--drop-target');
         }
     }
 
     removeAllDropIndicators() {
         const rows = this.containerEl.querySelectorAll('[draggable="true"]');
         rows.forEach(row => {
-            (row as HTMLElement).style.borderTop = '';
+            row.removeClass('azure-tree-row--drop-target');
         });
     }
 
