@@ -29,7 +29,6 @@
 
 ## TODO
 - [ ] Table Column Alignment
-- [ ] Tree View Filter and Search
 
 ## Libraries Used
 - https://github.com/markedjs/marked
