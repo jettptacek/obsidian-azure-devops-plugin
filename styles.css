@@ -138,21 +138,158 @@
 }
 
 /* ===========================================
-   Tree View Styles  
+   Tree View Search Styles  
    =========================================== */
 
+.azure-tree-search-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.azure-tree-search-container {
+    position: relative;
+    flex-grow: 1;
+    max-width: 400px;
+}
+
+.azure-tree-search-input {
+    width: 100%;
+    padding: 8px 32px 8px 12px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background-color: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 14px;
+    transition: border-color 0.2s ease;
+}
+
+.azure-tree-search-input:focus {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--interactive-accent-hover);
+}
+
+.azure-tree-search-input::placeholder {
+    color: var(--text-muted);
+}
+
+.azure-tree-search-icon {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 14px;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+
+.azure-tree-search-clear {
+    position: absolute;
+    right: 28px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0;
+    width: 20px;
+    height: 20px;
+    display: none;
+    border-radius: 50%;
+    transition: background-color 0.2s ease;
+}
+
+.azure-tree-search-clear:hover {
+    background-color: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.azure-tree-search-clear--visible {
+    display: block;
+}
+
+.azure-tree-search-results-count {
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    display: none;
+}
+
+.azure-tree-search-results-count--visible {
+    display: inline;
+}
+
+.azure-tree-search-result {
+    display: flex;
+    align-items: center;
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.azure-tree-search-result:hover {
+    background-color: var(--background-modifier-hover);
+}
+
+.azure-tree-search-result--selected {
+    background-color: var(--interactive-accent);
+    color: var(--text-on-accent);
+}
+
+.azure-tree-search-result--selected .azure-tree-pending-badge {
+    background-color: rgba(255, 255, 255, 0.9) !important;
+    color: var(--interactive-accent) !important;
+    border-color: rgba(255, 255, 255, 0.7) !important;
+}
+
+.azure-tree-search-breadcrumb {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-right: 12px;
+    min-width: 100px;
+    flex-shrink: 0;
+}
+
+.azure-tree-search-highlight {
+    background-color: var(--text-highlight-bg);
+    color: var(--text-normal);
+    padding: 1px 2px;
+    border-radius: 2px;
+    font-weight: 500;
+}
+
+.azure-tree-search-no-results {
+    padding: 20px;
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+/* ===========================================
+   Tree View Styles  
+   =========================================== */
 .azure-devops-tree-view {
     /* Main tree view container */
 }
 
 .azure-tree-header {
-    padding: 10px;
+    padding: 12px;
     border-bottom: 1px solid var(--background-modifier-border);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.azure-tree-header-row {
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
-
 .azure-tree-title {
     margin: 0;
 }
@@ -530,11 +667,14 @@
     }
 
     .azure-tree-header {
+        gap: 10px;
+    }
+    
+    .azure-tree-header-row {
         flex-direction: column;
         gap: 8px;
         align-items: stretch;
     }
-
     .azure-tree-button-container {
         flex-wrap: wrap;
         justify-content: center;

@@ -29,6 +29,13 @@ export class AzureDevOpsTreeView extends ItemView {
     // Auto-scroll and navigation properties
     private activeFileWatcher: any = null;
 
+    // Search functionality properties
+    private searchQuery: string = '';
+    private searchInput: HTMLInputElement | null = null;
+    private searchResults: WorkItemNode[] = [];
+    private selectedSearchIndex: number = -1;
+    private searchDebounceTimer: any = null;
+
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
         this.plugin = plugin;
@@ -46,26 +53,268 @@ export class AzureDevOpsTreeView extends ItemView {
         return 'git-branch';
     }
 
+    // Search functionality
+    fuzzySearch(query: string): WorkItemNode[] {
+        if (!query.trim()) {
+            return [];
+        }
+
+        const results: WorkItemNode[] = [];
+        const searchTerms = query.toLowerCase().split(' ').filter(term => term.length > 0);
+        
+        const searchNode = (node: WorkItemNode) => {
+            const searchText = `${node.id} ${node.title} ${node.type} ${node.state} ${node.assignedTo}`.toLowerCase();
+            const matches = searchTerms.every(term => searchText.includes(term));
+            
+            if (matches) {
+                results.push(node);
+            }
+            
+            // Recursively search children
+            node.children.forEach(searchNode);
+        };
+
+        this.workItemsTree.forEach(searchNode);
+        return results;
+    }
+
+    performSearch(query: string) {
+        this.searchQuery = query;
+        this.searchResults = this.fuzzySearch(query);
+        this.selectedSearchIndex = -1;
+        
+        if (query.trim()) {
+            this.renderSearchResults();
+        } else {
+            this.clearSearch();
+        }
+        
+        this.updateSearchResultsCount();
+    }
+
+    renderSearchResults() {
+        const treeContainer = this.virtualScrollContainer;
+        if (!treeContainer) return;
+
+        // Clear current tree display
+        treeContainer.empty();
+        
+        if (this.searchResults.length === 0) {
+            const noResults = treeContainer.createEl('div', { cls: 'azure-tree-search-no-results' });
+            noResults.textContent = `No work items found for "${this.searchQuery}"`;
+            return;
+        }
+
+        // Render search results
+        const fragment = document.createDocumentFragment();
+        
+        this.searchResults.forEach((node, index) => {
+            const nodeElement = this.createSearchResultElement(node, index);
+            fragment.appendChild(nodeElement);
+            this.nodeElements.set(node.id, nodeElement);
+        });
+        
+        treeContainer.appendChild(fragment);
+    }
+
+    createSearchResultElement(node: WorkItemNode, index: number): HTMLElement {
+        const row = document.createElement('div');
+        row.className = 'azure-tree-search-result';
+        row.dataset.nodeId = node.id.toString();
+        row.dataset.searchIndex = index.toString();
+        
+        if (index === this.selectedSearchIndex) {
+            row.classList.add('azure-tree-search-result--selected');
+        }
+        
+        const hasRelationshipChange = this.changedRelationships.has(node.id);
+        const hasContentChange = this.changedNotes.has(node.id);
+        
+        if (hasRelationshipChange || hasContentChange) {
+            row.classList.add('azure-tree-pending-change');
+        }
+        
+        (row as any).workItemNode = node;
+
+        // Breadcrumb path
+        const pathContainer = this.createBreadcrumbPath(node);
+        row.appendChild(pathContainer);
+
+        // Icon
+        const iconContainer = this.createIconContainer(node);
+        row.appendChild(iconContainer);
+
+        // Title with highlighting
+        const titleContainer = this.createHighlightedTitleElement(node);
+        row.appendChild(titleContainer);
+
+        // Badges
+        const stateBadge = this.createStateBadge(node);
+        row.appendChild(stateBadge);
+
+        if (node.priority) {
+            const priorityBadge = this.createPriorityBadge(node);
+            row.appendChild(priorityBadge);
+        }
+
+        if (node.assignedTo && node.assignedTo !== 'Unassigned') {
+            const assigneeBadge = this.createAssigneeBadge(node);
+            row.appendChild(assigneeBadge);
+        }
+
+        // Event handlers
+        row.addEventListener('click', () => {
+            this.selectSearchResult(index);
+            this.openWorkItemNote(node);
+        });
+
+        row.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.showContextMenu(e, node);
+        });
+
+        return row;
+    }
+
+    createBreadcrumbPath(node: WorkItemNode): HTMLElement {
+        const pathContainer = document.createElement('div');
+        pathContainer.className = 'azure-tree-search-breadcrumb';
+
+        const path: string[] = [];
+        let current = node.parent;
+        
+        while (current) {
+            path.unshift(`[${current.id}]`);
+            current = current.parent;
+        }
+        
+        pathContainer.textContent = path.length > 0 ? path.join(' > ') + ' >' : 'Root';
+        return pathContainer;
+    }
+
+    createHighlightedTitleElement(node: WorkItemNode): HTMLElement {
+        const container = document.createElement('div');
+        container.className = 'azure-tree-title-container';
+
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'azure-tree-title-text';
+        const titleText = `[${node.id}] ${node.title}`;
+        
+        if (this.searchQuery.trim()) {
+            titleSpan.innerHTML = this.highlightSearchTerms(titleText, this.searchQuery);
+        } else {
+            titleSpan.textContent = titleText;
+        }
+
+        container.appendChild(titleSpan);
+
+        // Add pending change badge
+        const hasRelationshipChange = this.changedRelationships.has(node.id);
+        const hasContentChange = this.changedNotes.has(node.id);
+        
+        if (hasRelationshipChange || hasContentChange) {
+            const badge = document.createElement('span');
+            badge.className = 'azure-tree-pending-badge';
+            
+            if (hasRelationshipChange && hasContentChange) {
+                badge.textContent = 'PENDING (REL + CONTENT)';
+                badge.title = 'Pending relationship and content changes';
+                badge.classList.add('azure-tree-pending-badge--both');
+            } else if (hasRelationshipChange) {
+                badge.textContent = 'PENDING (REL)';
+                badge.title = 'Pending relationship change';
+                badge.classList.add('azure-tree-pending-badge--relationship');
+            } else {
+                badge.textContent = 'PENDING (CONTENT)';
+                badge.title = 'Pending content changes';
+                badge.classList.add('azure-tree-pending-badge--content');
+            }
+            
+            container.appendChild(badge);
+        }
+
+        return container;
+    }
+
+    highlightSearchTerms(text: string, query: string): string {
+        const searchTerms = query.toLowerCase().split(' ').filter(term => term.length > 0);
+        let highlightedText = text;
+        
+        searchTerms.forEach(term => {
+            const regex = new RegExp(`(${term})`, 'gi');
+            highlightedText = highlightedText.replace(regex, '<span class="azure-tree-search-highlight">$1</span>');
+        });
+        
+        return highlightedText;
+    }
+
+    selectSearchResult(index: number) {
+        const previousSelected = this.virtualScrollContainer?.querySelector('.azure-tree-search-result--selected');
+        if (previousSelected) {
+            previousSelected.classList.remove('azure-tree-search-result--selected');
+        }
+        
+        this.selectedSearchIndex = index;
+        const newSelected = this.virtualScrollContainer?.querySelector(`[data-search-index="${index}"]`);
+        if (newSelected) {
+            newSelected.classList.add('azure-tree-search-result--selected');
+            newSelected.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+    }
+
+    navigateSearchResults(direction: 'up' | 'down') {
+        if (this.searchResults.length === 0) return;
+        
+        let newIndex = this.selectedSearchIndex;
+        
+        if (direction === 'down') {
+            newIndex = (newIndex + 1) % this.searchResults.length;
+        } else {
+            newIndex = newIndex <= 0 ? this.searchResults.length - 1 : newIndex - 1;
+        }
+        
+        this.selectSearchResult(newIndex);
+    }
+
+    clearSearch() {
+        this.searchQuery = '';
+        this.searchResults = [];
+        this.selectedSearchIndex = -1;
+        
+        if (this.searchInput) {
+            this.searchInput.value = '';
+        }
+        
+        this.refreshTreeDisplay();
+        this.updateSearchResultsCount();
+    }
+
+    updateSearchResultsCount() {
+        const countElement = this.containerEl.querySelector('.azure-tree-search-results-count') as HTMLElement;
+        if (countElement) {
+            if (this.searchQuery.trim() && this.searchResults.length > 0) {
+                countElement.textContent = `${this.searchResults.length} result${this.searchResults.length !== 1 ? 's' : ''}`;
+                countElement.classList.add('azure-tree-search-results-count--visible');
+            } else if (this.searchQuery.trim() && this.searchResults.length === 0) {
+                countElement.textContent = 'No results';
+                countElement.classList.add('azure-tree-search-results-count--visible');
+            } else {
+                countElement.classList.remove('azure-tree-search-results-count--visible');
+            }
+        }
+    }
+
     startActiveFileWatcher() {
         if (this.activeFileWatcher) {
             this.app.workspace.offref(this.activeFileWatcher);
         }
         
-        // Watch for active file changes
         this.activeFileWatcher = this.app.workspace.on('active-leaf-change', (leaf) => {
             if (leaf && leaf.view instanceof FileView && leaf.view.file) {
                 this.handleActiveFileChange(leaf.view.file);
             }
         });
         
-        // Watch for file-open events
-        this.app.workspace.on('file-open', (file) => {
-            if (file) {
-                this.handleActiveFileChange(file);
-            }
-        });
-        
-        // Watch for when files are opened via clicking in file explorer, command palette, etc.
         this.registerEvent(
             this.app.workspace.on('file-open', (file) => {
                 if (file) {
@@ -78,20 +327,16 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     async handleActiveFileChange(file: TFile) {
-        // Check if this is a work item file
         if (!file.path.startsWith('Azure DevOps Work Items/') || !file.path.endsWith('.md')) {
             return;
         }
         
-        // Extract work item ID from filename
         const match = file.name.match(/^WI-(\d+)/);
         if (!match) {
             return;
         }
         
         const workItemId = parseInt(match[1]);
-        
-        // Find and scroll to this work item in the tree
         await this.scrollToWorkItem(workItemId);
     }
 
@@ -103,7 +348,6 @@ export class AzureDevOpsTreeView extends ItemView {
         }
         
         await this.expandPathToNode(node);
-        
         await new Promise(resolve => setTimeout(resolve, 100));
         
         const nodeElement = this.nodeElements.get(workItemId);
@@ -112,7 +356,6 @@ export class AzureDevOpsTreeView extends ItemView {
             return;
         }
         
-        // Scroll the element into view with optional highlighting
         this.scrollElementIntoView(nodeElement, highlightItem);
     }
 
@@ -147,7 +390,7 @@ export class AzureDevOpsTreeView extends ItemView {
                     if (childrenContainer.children.length === 0 && nodeToExpand.children.length > 0) {
                         this.renderTreeOptimized(childrenContainer, nodeToExpand.children, this.getNodeLevel(nodeToExpand) + 1);
                     }
-                    childrenContainer.addClass('azure-tree-children-visible');
+                    childrenContainer.style.display = 'block';
                 }
             }
         }
@@ -270,16 +513,17 @@ export class AzureDevOpsTreeView extends ItemView {
             
             button.textContent = buttonText;
             button.title = titleText;
-            button.className = 'mod-warning azure-tree-push-button azure-tree-push-button--has-changes';
+            button.className = 'azure-tree-push-button azure-tree-push-button--has-changes';
             
             let indicator = button.querySelector('.azure-tree-change-indicator') as HTMLElement;
             if (!indicator) {
-                indicator = button.createEl('span', { cls: 'azure-tree-change-indicator' });
+                indicator = button.createEl('span');
+                indicator.className = 'azure-tree-change-indicator';
             }
         } else {
             button.textContent = 'Push Changes';
             button.title = 'No pending changes';
-            button.className = 'mod-secondary azure-tree-push-button';
+            button.className = 'azure-tree-push-button';
             
             const indicator = button.querySelector('.azure-tree-change-indicator');
             if (indicator) {
@@ -289,7 +533,7 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     updatePushButtonIfExists() {
-        const pushBtn = this.containerEl.querySelector('.azure-tree-push-button, .azure-tree-push-button--has-changes') as HTMLElement;
+        const pushBtn = this.containerEl.querySelector('.push-changes-btn') as HTMLElement;
         if (pushBtn) {
             this.updatePushButton(pushBtn);
         }
@@ -297,45 +541,106 @@ export class AzureDevOpsTreeView extends ItemView {
 
     async onOpen() {
         this.containerEl.empty();
-        this.containerEl.addClass('azure-devops-tree-view');
         
         // Header
-        const header = this.containerEl.createDiv('azure-tree-header');
+        const header = this.containerEl.createDiv({ cls: 'azure-tree-header' });
         
-        const title = header.createEl('h3', {
-            text: 'Azure DevOps Work Items',
-            cls: 'azure-tree-title'
-        });
+        // Main header row with title and buttons
+        const headerRow = header.createDiv({ cls: 'azure-tree-header-row' });
+        
+        const title = headerRow.createEl('h3', { cls: 'azure-tree-title' });
+        title.textContent = 'Backlog';
         
         // Button container
-        const buttonContainer = header.createDiv('azure-tree-button-container');
+        const buttonContainer = headerRow.createDiv({ cls: 'azure-tree-button-container' });
         
         // Toggle button
-        const toggleBtn = buttonContainer.createEl('button', {
-            cls: 'mod-secondary toggle-all-btn azure-tree-control-btn'
-        });
+        const toggleBtn = buttonContainer.createEl('button', { cls: 'azure-tree-control-btn toggle-all-btn' });
         this.updateToggleButton(toggleBtn);
         toggleBtn.addEventListener('click', () => this.toggleAll(toggleBtn));
 
-        const refreshBtn = buttonContainer.createEl('button', {
-            text: 'Refresh',
-            cls: 'mod-cta azure-tree-control-btn'
-        });
+        const refreshBtn = buttonContainer.createEl('button', { cls: 'mod-cta' });
+        refreshBtn.textContent = 'Refresh';
         refreshBtn.addEventListener('click', () => this.refreshTreeView());
 
-        const pushChangesBtn = buttonContainer.createEl('button', {
-            text: 'Push Changes',
-            cls: 'mod-warning azure-tree-push-button'
-        });
+        const pushChangesBtn = buttonContainer.createEl('button', { cls: 'azure-tree-push-button push-changes-btn' });
+        pushChangesBtn.textContent = 'Push Changes';
         this.updatePushButton(pushChangesBtn);
         pushChangesBtn.addEventListener('click', () => this.pushAllChanges());
+        
+        // Search row
+        const searchRow = header.createDiv({ cls: 'azure-tree-search-row' });
+        
+        // Search input container
+        const searchContainer = searchRow.createDiv({ cls: 'azure-tree-search-container' });
+        
+        // Search input
+        this.searchInput = searchContainer.createEl('input', { cls: 'azure-tree-search-input' }) as HTMLInputElement;
+        this.searchInput.type = 'text';
+        this.searchInput.placeholder = 'Search work items... (ID, title, type, state, assignee)';
+        
+        // Search icon
+        const searchIcon = searchContainer.createEl('span', { cls: 'azure-tree-search-icon' });
+        searchIcon.textContent = '🔍';
+        
+        // Clear button
+        const clearButton = searchContainer.createEl('button', { cls: 'azure-tree-search-clear' });
+        clearButton.textContent = '×';
+        clearButton.title = 'Clear search';
+        
+        // Search results count
+        const resultsCount = searchRow.createEl('span', { cls: 'azure-tree-search-results-count' });
+        
+        // Search event handlers
+        this.searchInput.addEventListener('input', (e) => {
+            const query = (e.target as HTMLInputElement).value;
+            
+            if (query.trim()) {
+                clearButton.classList.add('azure-tree-search-clear--visible');
+                searchIcon.style.display = 'none';
+            } else {
+                clearButton.classList.remove('azure-tree-search-clear--visible');
+                searchIcon.style.display = 'block';
+            }
+            
+            if (this.searchDebounceTimer) {
+                clearTimeout(this.searchDebounceTimer);
+            }
+            
+            this.searchDebounceTimer = setTimeout(() => {
+                this.performSearch(query);
+            }, 300);
+        });
+        
+        this.searchInput.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                this.navigateSearchResults('down');
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                this.navigateSearchResults('up');
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (this.selectedSearchIndex >= 0 && this.searchResults[this.selectedSearchIndex]) {
+                    this.openWorkItemNote(this.searchResults[this.selectedSearchIndex]);
+                }
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                this.clearSearch();
+                this.searchInput?.blur();
+            }
+        });
+        
+        clearButton.addEventListener('click', () => {
+            this.clearSearch();
+            this.searchInput?.focus();
+        });
 
         // Tree container
-        const treeContainer = this.containerEl.createDiv('azure-tree-container');
+        const treeContainer = this.containerEl.createDiv({ cls: 'azure-tree-container' });
         this.virtualScrollContainer = treeContainer;
         
         await this.buildTreeView(treeContainer);
-
         this.startActiveFileWatcher();
     }
 
@@ -362,10 +667,8 @@ export class AzureDevOpsTreeView extends ItemView {
             const workItems = await this.plugin.getWorkItemsWithRelations();
             
             if (workItems.length === 0) {
-                const message = container.createEl('p', {
-                    text: 'No work items found. Pull work items first.',
-                    cls: 'azure-tree-empty-message'
-                });
+                const message = container.createEl('p', { cls: 'azure-tree-empty-message' });
+                message.textContent = 'No work items found. Pull work items first.';
                 return;
             }
 
@@ -386,10 +689,8 @@ export class AzureDevOpsTreeView extends ItemView {
             }
             
         } catch (error) {
-            const errorMsg = container.createEl('p', {
-                text: `Error loading work items: ${error.message}`,
-                cls: 'azure-tree-error-message'
-            });
+            const errorMsg = container.createEl('p', { cls: 'azure-tree-error-message' });
+            errorMsg.textContent = `Error loading work items: ${error.message}`;
         }
     }
 
@@ -400,10 +701,8 @@ export class AzureDevOpsTreeView extends ItemView {
             const workItems = await this.plugin.getWorkItemsWithRelations();
             
             if (workItems.length === 0) {
-                const message = container.createEl('p', {
-                    text: 'No work items found. Pull work items first.',
-                    cls: 'azure-tree-empty-message'
-                });
+                const message = container.createEl('p', { cls: 'azure-tree-empty-message' });
+                message.textContent = 'No work items found. Pull work items first.';
                 return;
             }
 
@@ -427,10 +726,8 @@ export class AzureDevOpsTreeView extends ItemView {
             }
             
         } catch (error) {
-            const errorMsg = container.createEl('p', {
-                text: `Error loading work items: ${error.message}`,
-                cls: 'azure-tree-error-message'
-            });
+            const errorMsg = container.createEl('p', { cls: 'azure-tree-error-message' });
+            errorMsg.textContent = `Error loading work items: ${error.message}`;
         }
     }
 
@@ -591,21 +888,24 @@ export class AzureDevOpsTreeView extends ItemView {
                 }
                 
                 if (hasPendingChanges) {
-                    const badge = titleContainer.createEl('span', { cls: 'azure-tree-pending-badge' });
+                    const badge = document.createElement('span');
+                    badge.className = 'azure-tree-pending-badge';
                     
                     if (hasRelationshipChange && hasContentChange) {
                         badge.textContent = 'PENDING (REL + CONTENT)';
                         badge.title = 'Pending relationship and content changes';
-                        badge.addClass('azure-tree-pending-badge--both');
+                        badge.classList.add('azure-tree-pending-badge--both');
                     } else if (hasRelationshipChange) {
                         badge.textContent = 'PENDING (REL)';
                         badge.title = 'Pending relationship change';
-                        badge.addClass('azure-tree-pending-badge--relationship');
+                        badge.classList.add('azure-tree-pending-badge--relationship');
                     } else {
                         badge.textContent = 'PENDING (CONTENT)';
                         badge.title = 'Pending content changes';
-                        badge.addClass('azure-tree-pending-badge--content');
+                        badge.classList.add('azure-tree-pending-badge--content');
                     }
+                    
+                    titleContainer.appendChild(badge);
                 }
             }
         }
@@ -721,11 +1021,9 @@ export class AzureDevOpsTreeView extends ItemView {
             this.nodeElements.set(node.id, nodeElement);
             
             const childrenContainer = document.createElement('div');
-            childrenContainer.addClass('azure-tree-children-container');
-            if (!this.expandedNodes.has(node.id)) {
-                childrenContainer.addClass('azure-tree-children-hidden');
-            }
+            childrenContainer.style.display = this.expandedNodes.has(node.id) ? 'block' : 'none';
             childrenContainer.dataset.nodeId = node.id.toString();
+            childrenContainer.className = 'children-container';
             
             if (node.children.length > 0) {
                 if (this.expandedNodes.has(node.id)) {
@@ -742,15 +1040,13 @@ export class AzureDevOpsTreeView extends ItemView {
     createNodeElement(node: WorkItemNode, level: number): HTMLElement {
         const row = document.createElement('div');
         row.className = 'azure-tree-row';
-        row.classList.add(`azure-tree-level-${level}`);
+        row.style.marginLeft = `${level * 20}px`;
         row.draggable = true;
         row.dataset.nodeId = node.id.toString();
         
-        // Always check for current pending changes state
         const hasRelationshipChange = this.changedRelationships.has(node.id);
         const hasContentChange = this.changedNotes.has(node.id);
         
-        // Apply highlighting if there are pending changes
         if (hasRelationshipChange || hasContentChange) {
             row.classList.add('azure-tree-pending-change');
         }
@@ -763,10 +1059,10 @@ export class AzureDevOpsTreeView extends ItemView {
         const expandBtn = this.createExpandButton(node);
         row.appendChild(expandBtn);
 
-        const dragHandle = row.createEl('span', {
-            text: '⋮⋮',
-            cls: 'azure-tree-drag-handle'
-        });
+        const dragHandle = document.createElement('span');
+        dragHandle.textContent = '⋮⋮';
+        dragHandle.className = 'azure-tree-drag-handle';
+        row.appendChild(dragHandle);
 
         const iconContainer = this.createIconContainer(node);
         row.appendChild(iconContainer);
@@ -800,35 +1096,39 @@ export class AzureDevOpsTreeView extends ItemView {
         const container = document.createElement('div');
         container.className = 'azure-tree-title-container';
 
-        const titleSpan = container.createEl('span', {
-            text: `[${node.id}] ${node.title}`,
-            cls: 'azure-tree-title-text'
-        });
+        const titleSpan = document.createElement('span');
+        titleSpan.className = 'azure-tree-title-text';
+        titleSpan.textContent = `[${node.id}] ${node.title}`;
 
         titleSpan.addEventListener('click', (e) => {
             e.stopPropagation();
             this.openWorkItemNote(node);
         });
 
+        container.appendChild(titleSpan);
+
         const hasRelationshipChange = this.changedRelationships.has(node.id);
         const hasContentChange = this.changedNotes.has(node.id);
         
         if (hasRelationshipChange || hasContentChange) {
-            const badge = container.createEl('span', { cls: 'azure-tree-pending-badge' });
+            const badge = document.createElement('span');
+            badge.className = 'azure-tree-pending-badge';
             
             if (hasRelationshipChange && hasContentChange) {
                 badge.textContent = 'PENDING (REL + CONTENT)';
                 badge.title = 'Pending relationship and content changes - will be synced to Azure DevOps';
-                badge.addClass('azure-tree-pending-badge--both');
+                badge.classList.add('azure-tree-pending-badge--both');
             } else if (hasRelationshipChange) {
                 badge.textContent = 'PENDING (REL)';
                 badge.title = 'Pending relationship change - will be synced to Azure DevOps';
-                badge.addClass('azure-tree-pending-badge--relationship');
+                badge.classList.add('azure-tree-pending-badge--relationship');
             } else {
                 badge.textContent = 'PENDING (CONTENT)';
                 badge.title = 'Pending content changes - will be synced to Azure DevOps';
-                badge.addClass('azure-tree-pending-badge--content');
+                badge.classList.add('azure-tree-pending-badge--content');
             }
+            
+            container.appendChild(badge);
         }
 
         return container;
@@ -839,15 +1139,15 @@ export class AzureDevOpsTreeView extends ItemView {
         expandBtn.className = 'azure-tree-expand-button';
 
         if (node.children.length > 0) {
+            expandBtn.classList.add('azure-tree-expand-button--expandable');
             expandBtn.textContent = this.expandedNodes.has(node.id) ? '▼' : '▶';
-            expandBtn.addClass('azure-tree-expand-button--expandable');
             expandBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.toggleNodeOptimized(node);
             });
         } else {
+            expandBtn.classList.add('azure-tree-expand-button--leaf');
             expandBtn.textContent = '•';
-            expandBtn.addClass('azure-tree-expand-button--leaf');
         }
 
         return expandBtn;
@@ -879,9 +1179,7 @@ export class AzureDevOpsTreeView extends ItemView {
                 const svgElement = svgDoc.documentElement;
                 
                 if (svgElement && svgElement.tagName === 'svg') {
-                    svgElement.setAttribute('width', '16');
-                    svgElement.setAttribute('height', '16');
-                    svgElement.addClass('azure-tree-icon-svg');
+                    svgElement.classList.add('azure-tree-icon-svg');
                     container.appendChild(svgElement);
                 } else {
                     throw new Error('Invalid SVG content');
@@ -895,19 +1193,19 @@ export class AzureDevOpsTreeView extends ItemView {
     }
 
     setFallbackImage(container: HTMLElement, iconValue: string, workItemType: string) {
-        const iconImg = container.createEl('img', {
-            cls: 'azure-tree-icon-image'
-        });
+        const iconImg = document.createElement('img');
         iconImg.src = iconValue;
+        iconImg.className = 'azure-tree-icon-image';
         iconImg.alt = workItemType;
         iconImg.title = workItemType;
+        container.appendChild(iconImg);
         this.addImageErrorHandling(iconImg, container, workItemType);
     }
 
     addImageErrorHandling(iconImg: HTMLImageElement, iconContainer: HTMLElement, workItemType: string) {
         iconImg.addEventListener('error', () => {
             console.warn(`Failed to display icon for ${workItemType}, falling back to emoji`);
-            iconContainer.empty();
+            iconContainer.innerHTML = '';
             const emojiIcons: { [key: string]: string } = {
                 'Epic': '🎯', 'Feature': '🚀', 'User Story': '📝', 'Task': '✅', 
                 'Bug': '🐛', 'Issue': '⚠️', 'Test Case': '🧪', 'Requirement': '📋'
@@ -919,18 +1217,18 @@ export class AzureDevOpsTreeView extends ItemView {
 
     createStateBadge(node: WorkItemNode): HTMLElement {
         const stateBadge = document.createElement('span');
-        stateBadge.textContent = node.state;
         stateBadge.className = 'azure-tree-state-badge';
+        stateBadge.textContent = node.state;
         
         const stateKey = node.state.toLowerCase().replace(/\s+/g, '-');
         if (['new', 'active', 'to-do'].includes(stateKey)) {
-            stateBadge.addClass('azure-tree-state-badge--active');
+            stateBadge.classList.add('azure-tree-state-badge--active');
         } else if (['resolved', 'closed', 'done'].includes(stateKey)) {
-            stateBadge.addClass('azure-tree-state-badge--completed');
+            stateBadge.classList.add('azure-tree-state-badge--completed');
         } else if (stateKey === 'removed') {
-            stateBadge.addClass('azure-tree-state-badge--removed');
+            stateBadge.classList.add('azure-tree-state-badge--removed');
         } else {
-            stateBadge.addClass('azure-tree-state-badge--default');
+            stateBadge.classList.add('azure-tree-state-badge--default');
         }
 
         return stateBadge;
@@ -938,28 +1236,28 @@ export class AzureDevOpsTreeView extends ItemView {
 
     createPriorityBadge(node: WorkItemNode): HTMLElement {
         const priorityBadge = document.createElement('span');
-        priorityBadge.textContent = `P${node.priority}`;
         priorityBadge.className = 'azure-tree-priority-badge';
+        priorityBadge.textContent = `P${node.priority}`;
         return priorityBadge;
     }
 
     createAssigneeBadge(node: WorkItemNode): HTMLElement {
         const assigneeBadge = document.createElement('span');
-        assigneeBadge.textContent = node.assignedTo.split(' ')[0];
         assigneeBadge.className = 'azure-tree-assignee-badge';
+        assigneeBadge.textContent = node.assignedTo.split(' ')[0];
         return assigneeBadge;
     }
 
     attachDragHandlers(row: HTMLElement, node: WorkItemNode) {
         row.addEventListener('dragstart', (e) => {
             this.draggedNode = node;
-            row.addClass('azure-tree-row--dragging');
+            row.classList.add('azure-tree-row--dragging');
             e.dataTransfer!.effectAllowed = 'move';
             e.dataTransfer!.setData('text/plain', node.id.toString());
         });
 
         row.addEventListener('dragend', () => {
-            row.removeClass('azure-tree-row--dragging');
+            row.classList.remove('azure-tree-row--dragging');
             this.draggedNode = null;
             this.removeAllDropIndicators();
         });
@@ -990,25 +1288,27 @@ export class AzureDevOpsTreeView extends ItemView {
     attachHoverHandlers(row: HTMLElement) {
         row.addEventListener('mouseenter', () => {
             if (!this.draggedNode && !row.classList.contains('azure-tree-pending-change')) {
-                row.addClass('azure-tree-row--hover');
+                row.classList.add('azure-tree-row--hover');
             }
         });
         row.addEventListener('mouseleave', () => {
-            row.removeClass('azure-tree-row--hover');
+            if (!this.draggedNode && !row.classList.contains('azure-tree-pending-change')) {
+                row.classList.remove('azure-tree-row--hover');
+            }
         });
     }
 
     toggleNodeOptimized(node: WorkItemNode) {
         const isExpanded = this.expandedNodes.has(node.id);
         const childrenContainer = this.virtualScrollContainer?.querySelector(
-            `.azure-tree-children-container[data-node-id="${node.id}"]`
+            `.children-container[data-node-id="${node.id}"]`
         ) as HTMLElement;
         
         if (!childrenContainer) return;
 
         if (isExpanded) {
             this.expandedNodes.delete(node.id);
-            childrenContainer.addClass('azure-tree-children-hidden');
+            childrenContainer.style.display = 'none';
         } else {
             this.expandedNodes.add(node.id);
             
@@ -1016,7 +1316,7 @@ export class AzureDevOpsTreeView extends ItemView {
                 this.renderTreeOptimized(childrenContainer, node.children, this.getNodeLevel(node) + 1);
             }
             
-            childrenContainer.removeClass('azure-tree-children-hidden');
+            childrenContainer.style.display = 'block';
         }
 
         const nodeElement = this.nodeElements.get(node.id);
@@ -1113,16 +1413,16 @@ export class AzureDevOpsTreeView extends ItemView {
 
     showDropIndicator(element: HTMLElement, show: boolean) {
         if (show) {
-            element.addClass('azure-tree-row--drop-target');
+            element.classList.add('azure-tree-row--drop-target');
         } else {
-            element.removeClass('azure-tree-row--drop-target');
+            element.classList.remove('azure-tree-row--drop-target');
         }
     }
 
     removeAllDropIndicators() {
         const rows = this.containerEl.querySelectorAll('[draggable="true"]');
         rows.forEach(row => {
-            row.removeClass('azure-tree-row--drop-target');
+            (row as HTMLElement).classList.remove('azure-tree-row--drop-target');
         });
     }
 
@@ -1260,7 +1560,6 @@ export class AzureDevOpsTreeView extends ItemView {
                     const file = this.app.vault.getAbstractFileByPath(node.filePath || '');
                     if (file instanceof TFile) {
                         await this.plugin.pullSpecificWorkItem(file);
-                        // Update the cached content after pull
                         await this.updateSpecificWorkItemChanges(node.id, file);
                     } else {
                         new Notice('Work item note not found. Pull all work items first.');
@@ -1278,7 +1577,6 @@ export class AzureDevOpsTreeView extends ItemView {
                         let errorCount = 0;
                         let operations = 0;
 
-                        // Push parent-child relationship changes if any
                         if (this.changedRelationships.has(node.id)) {
                             operations++;
                             try {
@@ -1303,14 +1601,12 @@ export class AzureDevOpsTreeView extends ItemView {
                             }
                         }
 
-                        // Push content changes if any
                         if (this.changedNotes.has(node.id)) {
                             operations++;
                             try {
                                 const success = await this.plugin.workItemManager.pushSpecificWorkItem(file);
                                 if (success) {
                                     successCount++;
-                                    // Update the cached content after successful push
                                     const newContent = await this.app.vault.read(file);
                                     this.originalNoteContent.set(node.id, newContent);
                                     this.changedNotes.delete(node.id);
@@ -1323,14 +1619,12 @@ export class AzureDevOpsTreeView extends ItemView {
                             }
                         }
 
-                        // If no changes detected, still try to push content
                         if (operations === 0) {
                             operations++;
                             try {
                                 const success = await this.plugin.workItemManager.pushSpecificWorkItem(file);
                                 if (success) {
                                     successCount++;
-                                    // Update the cached content after successful push
                                     const newContent = await this.app.vault.read(file);
                                     this.originalNoteContent.set(node.id, newContent);
                                     this.changedNotes.delete(node.id);
@@ -1343,11 +1637,9 @@ export class AzureDevOpsTreeView extends ItemView {
                             }
                         }
 
-                        // Update the visual state and UI
                         await this.updateNodeVisualState(node.id);
                         this.updatePushButtonIfExists();
 
-                        // Show appropriate notice
                         if (errorCount === 0) {
                             new Notice(`Successfully pushed all changes for work item ${node.id}`);
                         } else if (successCount > 0) {
@@ -1436,6 +1728,11 @@ export class AzureDevOpsTreeView extends ItemView {
             this.app.vault.offref(this.fileWatcher);
         }
         
+        if (this.searchDebounceTimer) {
+            clearTimeout(this.searchDebounceTimer);
+            this.searchDebounceTimer = null;
+        }
+        
         this.renderedNodes.clear();
         this.nodeElements.clear();
         this.expandedNodes.clear();
@@ -1443,6 +1740,11 @@ export class AzureDevOpsTreeView extends ItemView {
         this.changedRelationships.clear();
         this.originalNoteContent.clear();
         this.changedNotes.clear();
+        
+        this.searchQuery = '';
+        this.searchResults = [];
+        this.selectedSearchIndex = -1;
+        this.searchInput = null;
     }
 
     async loadWorkItemTypeIcons() {
