@@ -285,6 +285,16 @@ export class AzureDevOpsTreeView extends ItemView {
             this.searchInput.value = '';
         }
         
+        // Update clear button and search icon visibility
+        const clearButton = this.containerEl.querySelector('.azure-tree-search-clear') as HTMLElement;
+        const searchIcon = this.containerEl.querySelector('.azure-tree-search-icon') as HTMLElement;
+        if (clearButton) {
+            clearButton.classList.remove('azure-tree-search-clear--visible');
+        }
+        if (searchIcon) {
+            searchIcon.classList.remove('azure-tree-search-icon--hidden');
+        }
+        
         this.refreshTreeDisplay();
         this.updateSearchResultsCount();
     }
@@ -584,8 +594,8 @@ export class AzureDevOpsTreeView extends ItemView {
         searchIcon.textContent = '🔍';
         
         // Clear button
-        const clearButton = searchContainer.createEl('button', { cls: 'azure-tree-search-clear' });
-        clearButton.textContent = '×';
+        const clearButton = searchContainer.createEl('span', { cls: 'azure-tree-search-clear' });
+        clearButton.textContent = '✕';
         clearButton.title = 'Clear search';
         
         // Search results count
@@ -597,10 +607,10 @@ export class AzureDevOpsTreeView extends ItemView {
             
             if (query.trim()) {
                 clearButton.classList.add('azure-tree-search-clear--visible');
-                searchIcon.style.display = 'none';
+                searchIcon.classList.add('azure-tree-search-icon--hidden');
             } else {
                 clearButton.classList.remove('azure-tree-search-clear--visible');
-                searchIcon.style.display = 'block';
+                searchIcon.classList.remove('azure-tree-search-icon--hidden');
             }
             
             if (this.searchDebounceTimer) {
