@@ -381,7 +381,25 @@ export class AzureDevOpsAPI {
                 if (detailsResponse.status >= 200 && detailsResponse.status < 300) {
                     const batchResult = detailsResponse.json;
                     if (batchResult.value && Array.isArray(batchResult.value)) {
-                        allWorkItems.push(...batchResult.value);
+                        // Process each work item to add field format information
+                        const processedWorkItems = batchResult.value.map((workItem: any) => {
+                            // Add field format information if available in the response
+                            if (workItem.fields && workItem._links) {
+                                // Initialize fieldFormats if not present
+                                if (!workItem.fieldFormats) {
+                                    workItem.fieldFormats = {};
+                                }
+                                
+                                // If the user has enabled markdown mode, and the description field exists,
+                                // mark it as markdown format for processing
+                                if (this.settings.useMarkdownInAzureDevOps && workItem.fields['System.Description']) {
+                                    workItem.fieldFormats['System.Description'] = { format: 'Markdown' };
+                                }
+                            }
+                            return workItem;
+                        });
+                        
+                        allWorkItems.push(...processedWorkItems);
                     }
                 } else {
                     new Notice(`Failed to fetch work item details for batch: ${detailsResponse.status}`);
@@ -414,7 +432,23 @@ export class AzureDevOpsAPI {
             });
 
             if (response.status >= 200 && response.status < 300) {
-                return response.json;
+                const workItem = response.json;
+                
+                // Add field format information if available in the response
+                if (workItem.fields && workItem._links) {
+                    // Initialize fieldFormats if not present
+                    if (!workItem.fieldFormats) {
+                        workItem.fieldFormats = {};
+                    }
+                    
+                    // If the user has enabled markdown mode, and the description field exists,
+                    // mark it as markdown format for processing
+                    if (this.settings.useMarkdownInAzureDevOps && workItem.fields['System.Description']) {
+                        workItem.fieldFormats['System.Description'] = { format: 'Markdown' };
+                    }
+                }
+                
+                return workItem;
             } else {
                 new Notice(`Failed to fetch work item: ${workItemId} : ${response.status}`);
                 console.error(`Failed to fetch work item: ${response.status} - ${response.text}`);

@@ -482,13 +482,20 @@ export class WorkItemManager {
         // Handle description with format detection
         let description = 'No description provided';
         if (fields['System.Description']) {
-            const isMarkdownFormat = workItem.fieldFormats && 
-                                   workItem.fieldFormats['System.Description'] && 
-                                   workItem.fieldFormats['System.Description'].format === 'Markdown';
+            // Check multiple ways Azure DevOps indicates markdown format
+            const isMarkdownFormat = (workItem.fieldFormats && 
+                                     workItem.fieldFormats['System.Description'] && 
+                                     workItem.fieldFormats['System.Description'].format === 'Markdown') ||
+                                    (workItem._links && workItem._links.workItemType && 
+                                     this.settings.useMarkdownInAzureDevOps);
             
-            description = isMarkdownFormat ? 
-                         fields['System.Description'] : 
-                         this.htmlToMarkdown(fields['System.Description']);
+            if (isMarkdownFormat || this.settings.useMarkdownInAzureDevOps) {
+                // When Azure DevOps is using markdown mode, preserve the content as-is
+                description = fields['System.Description'];
+            } else {
+                // Convert HTML to markdown for legacy format
+                description = this.htmlToMarkdown(fields['System.Description']);
+            }
         }
 
         // Process custom fields
