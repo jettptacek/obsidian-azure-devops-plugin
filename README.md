@@ -21,7 +21,7 @@
 ## ⚙️ Settings
 - Azure DevOps Organization and Project
 - Personal Access Token - Requires read and write permissions (`https://dev.azure.com/{Organization}/_usersSettings/tokens`)
-- Use Markdown in Auzre DevOps (!!! Not fully avaiable in Azure DevOps as of 7/25/2025)
+- Use Markdown in Auzre DevOps
 
 ## 📥 Installation
 - Obsidian Community Plugins: https://obsidian.md/plugins?id=azure-devops-backlog
