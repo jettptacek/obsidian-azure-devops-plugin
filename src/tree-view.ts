@@ -201,7 +201,7 @@ export class AzureDevOpsTreeView extends ItemView {
         const titleText = `[${node.id}] ${node.title}`;
         
         if (this.searchQuery.trim()) {
-            titleSpan.innerHTML = this.highlightSearchTerms(titleText, this.searchQuery);
+            this.setHighlightedText(titleSpan, titleText, this.searchQuery);
         } else {
             titleSpan.textContent = titleText;
         }
@@ -236,16 +236,67 @@ export class AzureDevOpsTreeView extends ItemView {
         return container;
     }
 
-    highlightSearchTerms(text: string, query: string): string {
+    setHighlightedText(element: HTMLElement, text: string, query: string): void {
         const searchTerms = query.toLowerCase().split(' ').filter(term => term.length > 0);
-        let highlightedText = text;
         
+        if (searchTerms.length === 0) {
+            element.textContent = text;
+            return;
+        }
+        
+        element.empty();
+        
+        let lastIndex = 0;
+        const lowerText = text.toLowerCase();
+        const matches: Array<{start: number, end: number, term: string}> = [];
+        
+        // Find all match positions
         searchTerms.forEach(term => {
-            const regex = new RegExp(`(${term})`, 'gi');
-            highlightedText = highlightedText.replace(regex, '<span class="azure-tree-search-highlight">$1</span>');
+            const termLower = term.toLowerCase();
+            let index = lowerText.indexOf(termLower, 0);
+            while (index !== -1) {
+                matches.push({
+                    start: index,
+                    end: index + term.length,
+                    term: text.substring(index, index + term.length)
+                });
+                index = lowerText.indexOf(termLower, index + 1);
+            }
         });
         
-        return highlightedText;
+        // Sort matches by start position
+        matches.sort((a, b) => a.start - b.start);
+        
+        // Remove overlapping matches
+        const nonOverlapping = [];
+        for (const match of matches) {
+            if (nonOverlapping.length === 0 || match.start >= nonOverlapping[nonOverlapping.length - 1].end) {
+                nonOverlapping.push(match);
+            }
+        }
+        
+        // Build the highlighted content
+        for (const match of nonOverlapping) {
+            // Add text before the match
+            if (match.start > lastIndex) {
+                const textNode = document.createTextNode(text.substring(lastIndex, match.start));
+                element.appendChild(textNode);
+            }
+            
+            // Add highlighted match
+            const highlightSpan = document.createElement('span');
+            highlightSpan.className = 'azure-tree-search-highlight';
+            highlightSpan.textContent = match.term;
+            element.appendChild(highlightSpan);
+            
+            lastIndex = match.end;
+        }
+        
+        // Add remaining text
+        if (lastIndex < text.length) {
+            const textNode = document.createTextNode(text.substring(lastIndex));
+            element.appendChild(textNode);
+        }
     }
 
     selectSearchResult(index: number) {
@@ -400,7 +451,8 @@ export class AzureDevOpsTreeView extends ItemView {
                     if (childrenContainer.children.length === 0 && nodeToExpand.children.length > 0) {
                         this.renderTreeOptimized(childrenContainer, nodeToExpand.children, this.getNodeLevel(nodeToExpand) + 1);
                     }
-                    childrenContainer.style.display = 'block';
+                    childrenContainer.classList.remove('azure-tree-children-hidden');
+                    childrenContainer.classList.add('azure-tree-children-visible');
                 }
             }
         }
@@ -1031,7 +1083,13 @@ export class AzureDevOpsTreeView extends ItemView {
             this.nodeElements.set(node.id, nodeElement);
             
             const childrenContainer = document.createElement('div');
-            childrenContainer.style.display = this.expandedNodes.has(node.id) ? 'block' : 'none';
+            if (this.expandedNodes.has(node.id)) {
+                childrenContainer.classList.remove('azure-tree-children-hidden');
+                childrenContainer.classList.add('azure-tree-children-visible');
+            } else {
+                childrenContainer.classList.remove('azure-tree-children-visible');
+                childrenContainer.classList.add('azure-tree-children-hidden');
+            }
             childrenContainer.dataset.nodeId = node.id.toString();
             childrenContainer.className = 'children-container';
             
@@ -1050,7 +1108,7 @@ export class AzureDevOpsTreeView extends ItemView {
     createNodeElement(node: WorkItemNode, level: number): HTMLElement {
         const row = document.createElement('div');
         row.className = 'azure-tree-row';
-        row.style.marginLeft = `${level * 20}px`;
+        row.classList.add(`azure-tree-level-${Math.min(level, 9)}`);
         row.draggable = true;
         row.dataset.nodeId = node.id.toString();
         
@@ -1215,7 +1273,7 @@ export class AzureDevOpsTreeView extends ItemView {
     addImageErrorHandling(iconImg: HTMLImageElement, iconContainer: HTMLElement, workItemType: string) {
         iconImg.addEventListener('error', () => {
             console.warn(`Failed to display icon for ${workItemType}, falling back to emoji`);
-            iconContainer.innerHTML = '';
+            iconContainer.empty();
             const emojiIcons: { [key: string]: string } = {
                 'Epic': '🎯', 'Feature': '🚀', 'User Story': '📝', 'Task': '✅', 
                 'Bug': '🐛', 'Issue': '⚠️', 'Test Case': '🧪', 'Requirement': '📋'
@@ -1318,7 +1376,8 @@ export class AzureDevOpsTreeView extends ItemView {
 
         if (isExpanded) {
             this.expandedNodes.delete(node.id);
-            childrenContainer.style.display = 'none';
+            childrenContainer.classList.remove('azure-tree-children-visible');
+            childrenContainer.classList.add('azure-tree-children-hidden');
         } else {
             this.expandedNodes.add(node.id);
             
@@ -1326,7 +1385,8 @@ export class AzureDevOpsTreeView extends ItemView {
                 this.renderTreeOptimized(childrenContainer, node.children, this.getNodeLevel(node) + 1);
             }
             
-            childrenContainer.style.display = 'block';
+            childrenContainer.classList.remove('azure-tree-children-hidden');
+            childrenContainer.classList.add('azure-tree-children-visible');
         }
 
         const nodeElement = this.nodeElements.get(node.id);

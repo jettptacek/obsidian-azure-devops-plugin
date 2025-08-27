@@ -741,6 +741,62 @@
 }
 
 /* ===========================================
+   Modal Styles
+   =========================================== */
+
+.azure-modal-error-message {
+    color: var(--text-error);
+    margin-bottom: 16px;
+}
+
+.azure-modal-description-textarea {
+    min-height: 100px;
+    resize: vertical;
+}
+
+.azure-modal-button-container {
+    display: flex;
+    gap: 8px;
+    margin-top: 20px;
+    justify-content: flex-end;
+}
+
+.azure-modal-type-description {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    font-style: italic;
+}
+
+/* ===========================================
+   Tree View Dynamic Styles
+   =========================================== */
+
+.azure-tree-children-visible {
+    display: block;
+}
+
+.azure-tree-children-hidden {
+    display: none;
+}
+
+.azure-tree-row-indented {
+    /* Base class for indented rows - specific levels added via JS */
+}
+
+/* Indentation levels for tree rows */
+.azure-tree-level-0 { margin-left: 0px; }
+.azure-tree-level-1 { margin-left: 20px; }
+.azure-tree-level-2 { margin-left: 40px; }
+.azure-tree-level-3 { margin-left: 60px; }
+.azure-tree-level-4 { margin-left: 80px; }
+.azure-tree-level-5 { margin-left: 100px; }
+.azure-tree-level-6 { margin-left: 120px; }
+.azure-tree-level-7 { margin-left: 140px; }
+.azure-tree-level-8 { margin-left: 160px; }
+.azure-tree-level-9 { margin-left: 180px; }
+
+/* ===========================================
    Print Styles
    =========================================== */
 

@@ -44,8 +44,7 @@ export class WorkItemModal extends Modal {
                 text: '⚠️ Could not load work item types from Azure DevOps. Using default types.',
                 cls: 'error-message'
             });
-            errorEl.style.color = 'var(--text-error)';
-            errorEl.style.marginBottom = '16px';
+            errorEl.classList.add('azure-modal-error-message');
             
             this.setDefaultWorkItemTypes();
             this.buildForm();
@@ -174,18 +173,14 @@ export class WorkItemModal extends Modal {
                 
                 // Make the text area larger
                 text.inputEl.rows = 4;
-                text.inputEl.style.minHeight = '100px';
-                text.inputEl.style.resize = 'vertical';
+                text.inputEl.classList.add('azure-modal-description-textarea');
                 
                 return text;
             });
 
         // Action buttons
         const buttonContainer = contentEl.createDiv();
-        buttonContainer.style.display = 'flex';
-        buttonContainer.style.gap = '8px';
-        buttonContainer.style.marginTop = '20px';
-        buttonContainer.style.justifyContent = 'flex-end';
+        buttonContainer.classList.add('azure-modal-button-container');
 
         // Cancel button
         const cancelBtn = buttonContainer.createEl('button', {
@@ -222,10 +217,7 @@ export class WorkItemModal extends Modal {
             if (typeSettingEl) {
                 const descEl = document.createElement('div');
                 descEl.className = 'type-description';
-                descEl.style.fontSize = '12px';
-                descEl.style.color = 'var(--text-muted)';
-                descEl.style.marginTop = '4px';
-                descEl.style.fontStyle = 'italic';
+                descEl.classList.add('azure-modal-type-description');
                 descEl.textContent = `💡 ${selectedType.description}`;
                 
                 typeSettingEl.appendChild(descEl);
