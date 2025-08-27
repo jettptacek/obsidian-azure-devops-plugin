@@ -1,4 +1,4 @@
-import { App, Notice, TFile } from 'obsidian';
+import { App, Notice, TFile, Menu, MenuItem } from 'obsidian';
 import { WorkItemManager } from './work-item-manager';
 
 export class MenuManager {
@@ -27,10 +27,10 @@ export class MenuManager {
         }
     }
 
-    addAzureDevOpsMenuItems(menu: any, file: any) {
+    addAzureDevOpsMenuItems(menu: Menu, file: TFile) {
         if (file instanceof TFile && file.extension === 'md') {
 
-            menu.addItem((item: any) => {
+            menu.addItem((item: MenuItem) => {
                 item
                     .setTitle('Focus in Tree')
                     .setIcon('focus')
@@ -47,7 +47,7 @@ export class MenuManager {
 
             menu.addSeparator();
 
-            menu.addItem((item: any) => {
+            menu.addItem((item: MenuItem) => {
                 item
                     .setTitle('Push to Azure DevOps')
                     .setIcon('upload')
@@ -62,7 +62,7 @@ export class MenuManager {
                     });
             });
 
-            menu.addItem((item: any) => {
+            menu.addItem((item: MenuItem) => {
                 item
                     .setTitle('Pull from Azure DevOps')
                     .setIcon('download')
@@ -77,7 +77,7 @@ export class MenuManager {
                     });
             });
 
-            menu.addItem((item: any) => {
+            menu.addItem((item: MenuItem) => {
                 item
                     .setTitle('View in Azure DevOps')
                     .setIcon('external-link')

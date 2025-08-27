@@ -97,7 +97,9 @@ export default class AzureDevOpsPlugin extends Plugin {
         // Register context menu handlers
         this.registerEvent(
             this.app.workspace.on('file-menu', (menu, file) => {
-                this.menuManager.addAzureDevOpsMenuItems(menu, file);
+                if (file instanceof TFile) {
+                    this.menuManager.addAzureDevOpsMenuItems(menu, file);
+                }
             })
         );
 
@@ -181,13 +183,10 @@ export default class AzureDevOpsPlugin extends Plugin {
                     const treeView = leaves[0].view;
                     
                     if (treeView.getViewType() === 'azure-devops-tree-view') {
-                        const azureTreeView = treeView as any;
+                        const azureTreeView = treeView as AzureDevOpsTreeView;
                         
-                        if (typeof azureTreeView.addNewWorkItemToTree === 'function') {
-                            await azureTreeView.addNewWorkItemToTree(result);
-                        } else {
-                            this.refreshTreeView();
-                        }
+                        // Refresh the tree view to show the new work item
+                        azureTreeView.refreshTreeView();
                     } else {
                         this.refreshTreeView();
                     }

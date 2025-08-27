@@ -1,5 +1,5 @@
 import { WorkspaceLeaf, ItemView, Menu, TFile, Notice, FileView } from 'obsidian';
-import { WorkItemNode, WorkItemRelation } from './settings';
+import { WorkItemNode, WorkItemRelation, HTMLElementWithWorkItem, AzureDevOpsWorkItem } from './settings';
 
 export const VIEW_TYPE_AZURE_DEVOPS_TREE = 'azure-devops-tree-view';
 
@@ -134,7 +134,7 @@ export class AzureDevOpsTreeView extends ItemView {
             row.classList.add('azure-tree-pending-change');
         }
         
-        (row as any).workItemNode = node;
+        (row as HTMLElementWithWorkItem).workItemNode = node;
 
         // Breadcrumb path
         const pathContainer = this.createBreadcrumbPath(node);
@@ -1119,7 +1119,7 @@ export class AzureDevOpsTreeView extends ItemView {
             row.classList.add('azure-tree-pending-change');
         }
         
-        (row as any).workItemNode = node;
+        (row as HTMLElementWithWorkItem).workItemNode = node;
 
         this.attachDragHandlers(row, node);
         this.attachHoverHandlers(row);
