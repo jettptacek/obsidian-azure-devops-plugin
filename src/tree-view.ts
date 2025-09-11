@@ -740,6 +740,9 @@ export class AzureDevOpsTreeView extends ItemView {
             await this.storeOriginalNoteContent(this.workItemsTree);
             await this.detectNoteChanges(this.workItemsTree);
             
+            // Load any previously saved pending changes
+            await this.loadPendingChanges();
+            
             this.initializeExpandedState(this.workItemsTree);
             this.renderTreeOptimized(container, this.workItemsTree);
             
@@ -923,6 +926,9 @@ export class AzureDevOpsTreeView extends ItemView {
                 
                 await this.updateNodeVisualState(workItemId);
                 this.updatePushButtonIfExists();
+                
+                // Save pending changes to settings after any change
+                await this.savePendingChanges();
             }
         } catch (error) {
             console.warn(`Error checking changes for work item ${workItemId}:`, error);
@@ -1343,12 +1349,12 @@ export class AzureDevOpsTreeView extends ItemView {
             this.showDropIndicator(row, false);
         });
 
-        row.addEventListener('drop', (e) => {
+        row.addEventListener('drop', async (e) => {
             e.preventDefault();
             this.showDropIndicator(row, false);
             
             if (this.draggedNode && this.draggedNode.id !== node.id && !this.isDescendant(this.draggedNode, node)) {
-                this.changeParentChild(this.draggedNode, node);
+                await this.changeParentChild(this.draggedNode, node);
             }
         });
     }
@@ -1442,7 +1448,7 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    changeParentChild(childNode: WorkItemNode, newParentNode: WorkItemNode) {
+    async changeParentChild(childNode: WorkItemNode, newParentNode: WorkItemNode) {
         if (childNode.parent) {
             const oldParent = childNode.parent;
             oldParent.children = oldParent.children.filter(child => child.id !== childNode.id);
@@ -1465,6 +1471,9 @@ export class AzureDevOpsTreeView extends ItemView {
         this.sortNodes(newParentNode.children);
         this.refreshTreeDisplay();
         this.updatePushButtonIfExists();
+
+        // Save pending changes to settings after relationship change
+        await this.savePendingChanges();
 
         const totalChanges = this.changedRelationships.size + this.changedNotes.size;
         new Notice(`Moved [${childNode.id}] ${childNode.title} under [${newParentNode.id}] ${newParentNode.title}. ${totalChanges} change${totalChanges !== 1 ? 's' : ''} pending.`);
@@ -1573,8 +1582,12 @@ export class AzureDevOpsTreeView extends ItemView {
                 new Notice(`Successfully pushed all changes!`);
                 this.changedRelationships.clear();
                 this.storeOriginalRelationships(this.workItemsTree);
+                // Clear saved pending changes since everything was pushed successfully
+                await this.clearPendingChanges();
             } else {
                 new Notice(`Pushed ${successCount} changes, ${errorCount} failed. Check console for details.`);
+                // Save remaining pending changes
+                await this.savePendingChanges();
             }
             
             this.updatePushButtonIfExists();
@@ -1618,7 +1631,7 @@ export class AzureDevOpsTreeView extends ItemView {
         menu.addItem((item) => {
             item.setTitle('Make Root Item')
                 .setIcon('arrow-up')
-                .onClick(() => this.makeRootItem(node));
+                .onClick(async () => await this.makeRootItem(node));
         });
 
         menu.addSeparator();
@@ -1737,7 +1750,7 @@ export class AzureDevOpsTreeView extends ItemView {
         menu.showAtMouseEvent(event);
     }
 
-    makeRootItem(node: WorkItemNode) {
+    async makeRootItem(node: WorkItemNode) {
         if (node.parent) {
             const oldParent = node.parent;
             oldParent.children = oldParent.children.filter(child => child.id !== node.id);
@@ -1760,6 +1773,9 @@ export class AzureDevOpsTreeView extends ItemView {
 
         this.refreshTreeDisplay();
         this.updatePushButtonIfExists();
+        
+        // Save pending changes to settings after relationship change
+        await this.savePendingChanges();
         
         const totalChanges = this.changedRelationships.size + this.changedNotes.size;
         new Notice(`Made [${node.id}] ${node.title} a root item. ${totalChanges} change${totalChanges !== 1 ? 's' : ''} pending.`);
@@ -1788,6 +1804,73 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
+    async savePendingChanges() {
+        try {
+            const pendingChanges = {
+                changedNotes: Array.from(this.changedNotes),
+                changedRelationships: Object.fromEntries(this.changedRelationships),
+                lastSaved: Date.now()
+            };
+            
+            this.plugin.settings.pendingChanges = pendingChanges;
+            await this.plugin.saveSettings();
+            
+            console.log('Azure DevOps: Saved pending changes to settings:', pendingChanges);
+        } catch (error) {
+            console.error('Azure DevOps: Error saving pending changes:', error);
+        }
+    }
+
+    async loadPendingChanges() {
+        try {
+            const savedChanges = this.plugin.settings.pendingChanges;
+            if (savedChanges && savedChanges.lastSaved > 0) {
+                if (savedChanges.changedNotes) {
+                    savedChanges.changedNotes.forEach((id: number) => {
+                        this.changedNotes.add(id);
+                    });
+                }
+                
+                if (savedChanges.changedRelationships) {
+                    Object.entries(savedChanges.changedRelationships).forEach(([key, value]) => {
+                        this.changedRelationships.set(parseInt(key), value as number | null);
+                    });
+                }
+                
+                console.log('Azure DevOps: Loaded pending changes from settings:', savedChanges);
+                this.updatePushButtonIfExists();
+                
+                const timeSinceLastSave = Date.now() - savedChanges.lastSaved;
+                const hoursSinceLastSave = Math.floor(timeSinceLastSave / (1000 * 60 * 60));
+                
+                if (hoursSinceLastSave > 0) {
+                    new Notice(`Restored ${this.changedNotes.size + this.changedRelationships.size} pending Azure DevOps changes from ${hoursSinceLastSave} hour${hoursSinceLastSave !== 1 ? 's' : ''} ago`, 5000);
+                } else {
+                    const minutesSinceLastSave = Math.floor(timeSinceLastSave / (1000 * 60));
+                    if (minutesSinceLastSave > 0) {
+                        new Notice(`Restored ${this.changedNotes.size + this.changedRelationships.size} pending Azure DevOps changes from ${minutesSinceLastSave} minute${minutesSinceLastSave !== 1 ? 's' : ''} ago`, 5000);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error('Azure DevOps: Error loading pending changes:', error);
+        }
+    }
+
+    async clearPendingChanges() {
+        this.changedNotes.clear();
+        this.changedRelationships.clear();
+        
+        this.plugin.settings.pendingChanges = {
+            changedNotes: [],
+            changedRelationships: {},
+            lastSaved: 0
+        };
+        
+        await this.plugin.saveSettings();
+        console.log('Azure DevOps: Cleared pending changes from settings');
+    }
+
     async onClose() {
         if (this.activeFileWatcher) {
             this.app.workspace.offref(this.activeFileWatcher);
@@ -1802,6 +1885,9 @@ export class AzureDevOpsTreeView extends ItemView {
             clearTimeout(this.searchDebounceTimer);
             this.searchDebounceTimer = null;
         }
+        
+        // Save pending changes before closing
+        await this.savePendingChanges();
         
         this.renderedNodes.clear();
         this.nodeElements.clear();

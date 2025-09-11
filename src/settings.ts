@@ -1,8 +1,15 @@
+export interface PendingChangesData {
+    changedNotes: number[];
+    changedRelationships: { [workItemId: number]: number | null };
+    lastSaved: number; // timestamp
+}
+
 export interface AzureDevOpsSettings {
     organization: string;
     project: string;
     personalAccessToken: string;
     useMarkdownInAzureDevOps: boolean;
+    pendingChanges?: PendingChangesData;
 }
 
 export const DEFAULT_SETTINGS: AzureDevOpsSettings = {

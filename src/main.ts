@@ -94,6 +94,20 @@ export default class AzureDevOpsPlugin extends Plugin {
             }
         });
 
+
+        this.addCommand({
+            id: 'check-pending-changes',
+            name: 'Check Pending Azure DevOps Changes',
+            callback: () => {
+                const pendingChanges = this.getPendingChangesCount();
+                if (pendingChanges > 0) {
+                    new Notice(`⚠️ You have ${pendingChanges} pending changes that need to be pushed to Azure DevOps`, 8000);
+                } else {
+                    new Notice('✅ No pending changes detected', 3000);
+                }
+            }
+        });
+
         // Register context menu handlers
         this.registerEvent(
             this.app.workspace.on('file-menu', (menu, file) => {
@@ -267,5 +281,46 @@ export default class AzureDevOpsPlugin extends Plugin {
 
     async validateAzureDevOpsLinks(): Promise<void> {
         return this.linkValidator.validateAllAzureDevOpsLinks();
+    }
+
+    getPendingChangesCount(): number {
+        try {
+            const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_AZURE_DEVOPS_TREE);
+            const treeView = leaves[0]?.view;
+            
+            if (treeView) {
+                const azureTreeView = treeView as any;
+                const changedNotes = azureTreeView.changedNotes?.size || 0;
+                const changedRelationships = azureTreeView.changedRelationships?.size || 0;
+                const total = changedNotes + changedRelationships;
+                
+                console.log('Azure DevOps: getPendingChangesCount:', {
+                    changedNotes,
+                    changedRelationships,
+                    total,
+                    treeViewReady: !!treeView,
+                    changedNotesData: azureTreeView.changedNotes ? Array.from(azureTreeView.changedNotes) : null,
+                    changedRelData: azureTreeView.changedRelationships ? Object.fromEntries(azureTreeView.changedRelationships) : null
+                });
+                
+                return total;
+            }
+            
+            // Fallback: check saved settings if tree view not ready yet
+            const savedChanges = this.settings.pendingChanges;
+            if (savedChanges && savedChanges.lastSaved > 0) {
+                const savedCount = (savedChanges.changedNotes?.length || 0) + 
+                                 (Object.keys(savedChanges.changedRelationships || {}).length || 0);
+                
+                console.log('Azure DevOps: Using saved pending changes count:', savedCount);
+                return savedCount;
+            }
+            
+            console.log('Azure DevOps: No tree view or saved changes found');
+            return 0;
+        } catch (error) {
+            console.error('Azure DevOps: Error getting pending changes count:', error);
+            return 0;
+        }
     }
 }
