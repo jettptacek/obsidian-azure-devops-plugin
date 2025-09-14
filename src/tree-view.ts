@@ -1747,6 +1747,18 @@ export class AzureDevOpsTreeView extends ItemView {
                 });
         });
 
+        menu.addSeparator();
+
+        menu.addItem((item) => {
+            item.setTitle('Create Wiki Note')
+                .setIcon('file-plus')
+                .onClick(async () => {
+                    if (this.plugin.workItemManager) {
+                        await this.plugin.workItemManager.createWikiNoteFromTreeNode(node.id);
+                    }
+                });
+        });
+
         menu.showAtMouseEvent(event);
     }
 

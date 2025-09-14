@@ -1356,6 +1356,103 @@ ${relationshipSections}
         this.relatedItemsCache.clear();
     }
 
+    async createWikiNoteFromTreeNode(workItemId: number): Promise<void> {
+        try {
+            const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+            if (!treeView) {
+                new Notice('❌ Please open the Azure DevOps Tree view first');
+                return;
+            }
+            
+            const parentNode = treeView.allNodes.get(workItemId);
+            if (!parentNode) {
+                new Notice('❌ Work item not found in tree');
+                return;
+            }
+            
+            const { WikiPreviewModal } = await import('./modals');
+            const modal = new WikiPreviewModal(
+                this.app, 
+                parentNode,  // Pass the whole node instead of just markdown
+                async (content: string, filename: string) => {
+                    await this.saveWikiNote(content, filename);
+                }
+            );
+            modal.open();
+            
+        } catch (error) {
+            new Notice(`❌ Error creating wiki note: ${error.message}`);
+            console.error('Wiki note creation error:', error);
+        }
+    }
+
+
+
+    extractDescriptionFromNote(content: string): string {
+        if (!content) return '';
+        
+        // Multiple regex patterns to handle different formatting variations
+        const patterns = [
+            // Standard format: ## Description\n\n followed by content until next section
+            /## Description\n\n([\s\S]*?)(?=\n## (?:Custom Fields|Links))/,
+            // With single newline: ## Description\n followed by content
+            /## Description\n([\s\S]*?)(?=\n## (?:Custom Fields|Links))/,
+            // More flexible: ## Description with optional whitespace
+            /## Description\s*\n\s*([\s\S]*?)(?=\n## |---|\*Last|$)/,
+            // Catch all: everything after ## Description until end or next major section
+            /## Description[\s\S]*?\n([\s\S]*?)(?=\n---|\*Last|$)/
+        ];
+        
+        for (const pattern of patterns) {
+            const match = content.match(pattern);
+            if (match && match[1]) {
+                let description = match[1].trim();
+                // Clean up common artifacts
+                description = description.replace(/\n---\s*$/, '').trim();
+                description = description.replace(/^\s*\n+/, '').replace(/\n+\s*$/, '');
+                
+                if (description.length > 0) {
+                    console.log('Description extracted successfully:', description.substring(0, 100) + '...');
+                    return description;
+                }
+            }
+        }
+        
+        console.log('No description found in content, first 200 chars:', content.substring(0, 200));
+        return '';
+    }
+
+    private async saveWikiNote(content: string, filename: string): Promise<void> {
+        const wikiFolder = 'wiki';
+        
+        // Create wiki folder if it doesn't exist
+        if (!await this.app.vault.adapter.exists(wikiFolder)) {
+            await this.app.vault.createFolder(wikiFolder);
+        }
+        
+        // Ensure filename has .md extension
+        const finalFilename = filename.endsWith('.md') ? filename : `${filename}.md`;
+        const fullPath = `${wikiFolder}/${finalFilename}`;
+        
+        // Check if file exists and handle accordingly
+        if (await this.app.vault.adapter.exists(fullPath)) {
+            const existingFile = this.app.vault.getAbstractFileByPath(fullPath);
+            if (existingFile instanceof TFile) {
+                await this.app.vault.modify(existingFile, content);
+                new Notice(`✅ Updated wiki note: ${finalFilename}`);
+            }
+        } else {
+            await this.app.vault.create(fullPath, content);
+            new Notice(`✅ Created wiki note: ${finalFilename}`);
+        }
+        
+        // Open the created/updated file
+        const file = this.app.vault.getAbstractFileByPath(fullPath);
+        if (file instanceof TFile) {
+            await this.app.workspace.getLeaf().openFile(file);
+        }
+    }
+
     sanitizeFileName(title: string): string {
         if (!title) return 'Untitled';
         
