@@ -8,8 +8,8 @@
 
 ## ⚡ Key Features
 -  Azure DevOps Work Items Syncization 
-  	- Pull work items from Azure DevOps into Obsidian notes (`html -> markdown`)
-	- Push changes from Obsidian back to Azure DevOps (`markdown -> html`)
+  	- Pull work items from Azure DevOps into Obsidian notes (`html -> markdown` or `markdown -> markdown`)
+	- Push changes from Obsidian back to Azure DevOps (`markdown -> html` or `markdown -> markdown`)
 - Interactive Tree View
   	- Quick access to work item details and Azure DevOps links
 	- Visual hierarchy of work items with drag-and-drop reordering
