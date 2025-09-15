@@ -1370,20 +1370,82 @@ ${relationshipSections}
                 return;
             }
             
-            const { WikiPreviewModal } = await import('./modals');
-            const modal = new WikiPreviewModal(
-                this.app, 
-                parentNode,  // Pass the whole node instead of just markdown
-                async (content: string, filename: string) => {
-                    await this.saveWikiNote(content, filename);
+            // Validate and enhance node data for wiki creation
+            const enhancedNode = await this.validateAndEnhanceNodeForWiki(parentNode, treeView);
+            
+            console.log('WikiCreation: Enhanced node data:', {
+                id: enhancedNode.id,
+                title: enhancedNode.title,
+                filePath: enhancedNode.filePath,
+                hasFilePath: !!enhancedNode.filePath,
+                childrenCount: enhancedNode.children?.length || 0,
+                childrenWithFiles: enhancedNode.children?.filter((child: any) => child.filePath).length || 0
+            });
+            
+            // Open the Wiki Maker view and load the data
+            await this.plugin.activateWikiMakerView();
+            
+            // Get the WikiMaker view and load the work item data
+            const wikiMakerLeaves = this.plugin.app.workspace.getLeavesOfType('azure-devops-wiki-maker');
+            if (wikiMakerLeaves.length > 0) {
+                const wikiMakerView = wikiMakerLeaves[0].view;
+                if (wikiMakerView && typeof wikiMakerView.loadWorkItemData === 'function') {
+                    await wikiMakerView.loadWorkItemData(enhancedNode);
+                } else {
+                    new Notice('❌ Wiki Maker view not available');
                 }
-            );
-            modal.open();
+            } else {
+                new Notice('❌ Could not open Wiki Maker view');
+            }
             
         } catch (error) {
-            new Notice(`❌ Error creating wiki note: ${error.message}`);
-            console.error('Wiki note creation error:', error);
+            new Notice(`❌ Error opening wiki maker: ${error.message}`);
+            console.error('Wiki maker error:', error);
         }
+    }
+    
+    private async validateAndEnhanceNodeForWiki(node: any, treeView: any): Promise<any> {
+        // Create a copy of the node to avoid modifying the original
+        const enhancedNode = { ...node };
+        
+        // Ensure the node has a filePath - construct it if missing
+        if (!enhancedNode.filePath) {
+            enhancedNode.filePath = this.constructWorkItemFilePath(enhancedNode.id, enhancedNode.title);
+            console.log(`WikiCreation: Generated filePath for parent node ${enhancedNode.id}: ${enhancedNode.filePath}`);
+        }
+        
+        // Ensure children array exists and validate children
+        if (!enhancedNode.children) {
+            enhancedNode.children = [];
+        }
+        
+        // Enhance children data
+        enhancedNode.children = enhancedNode.children.map((child: any): any => {
+            const enhancedChild = { ...child };
+            
+            // Ensure child has a filePath
+            if (!enhancedChild.filePath) {
+                enhancedChild.filePath = this.constructWorkItemFilePath(enhancedChild.id, enhancedChild.title);
+                console.log(`WikiCreation: Generated filePath for child node ${enhancedChild.id}: ${enhancedChild.filePath}`);
+            }
+            
+            return enhancedChild;
+        });
+        
+        console.log('WikiCreation: Node validation summary:', {
+            parentId: enhancedNode.id,
+            parentHasFilePath: !!enhancedNode.filePath,
+            childrenCount: enhancedNode.children.length,
+            childrenWithFilePaths: enhancedNode.children.filter((child: any) => child.filePath).length
+        });
+        
+        return enhancedNode;
+    }
+    
+    private constructWorkItemFilePath(workItemId: number, title: string): string {
+        const safeTitle = this.sanitizeFileName(title);
+        const filename = `WI-${workItemId} ${safeTitle}.md`;
+        return `Azure DevOps Work Items/${filename}`;
     }
 
 

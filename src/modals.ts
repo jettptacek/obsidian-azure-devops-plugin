@@ -352,12 +352,14 @@ export class WikiPreviewModal extends Modal {
     private filenameInput: HTMLInputElement | null = null;
     private fileSelectionContainer: HTMLElement | null = null;
     private availableFiles: WikiFile[] = [];
+    private parentNode: any;
+    private filesInitialized: boolean = false;
     
     constructor(app: App, parentNode: any, onConfirm: (content: string, filename: string) => Promise<void>) {
         super(app);
         this.workItemTitle = parentNode.title;
         this.onConfirm = onConfirm;
-        this.initializeFiles(parentNode);
+        this.parentNode = parentNode;
     }
     
     private async initializeFiles(parentNode: any) {
@@ -504,25 +506,66 @@ export class WikiPreviewModal extends Modal {
     }
     
     async onOpen() {
-        // Wait for files to be initialized
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
         const { contentEl } = this;
         contentEl.empty();
         contentEl.createEl('h2', { text: 'Create Wiki Note' });
         
+        // Show loading message
+        const loadingEl = contentEl.createEl('p', { 
+            text: '🔄 Loading files from work items...',
+            cls: 'wiki-loading-message'
+        });
+        
+        try {
+            // Initialize files properly
+            await this.initializeFiles(this.parentNode);
+            this.filesInitialized = true;
+            
+            // Remove loading message
+            loadingEl.remove();
+            
+            // Build the UI
+            this.buildUI(contentEl);
+            
+        } catch (error) {
+            console.error('WikiPreviewModal: Error initializing files:', error);
+            loadingEl.remove();
+            
+            // Show error message
+            const errorEl = contentEl.createEl('p', {
+                text: '❌ Failed to load files. Please try again.',
+                cls: 'wiki-error-message'
+            });
+            
+            // Add retry button
+            const retryBtn = contentEl.createEl('button', {
+                text: 'Retry',
+                cls: 'mod-cta'
+            });
+            retryBtn.onclick = () => {
+                this.onOpen();
+            };
+        }
+    }
+    
+    private buildUI(contentEl: HTMLElement) {
         // Add explanatory text
         const description = contentEl.createEl('p', { cls: 'wiki-preview-description' });
         description.textContent = 'Select files to include and preview the generated wiki note content.';
         
-        // File selection section
-        this.createFileSelectionSection(contentEl);
-        
-        // Filename section
+        // Filename section (above the two-column layout)
         this.createFilenameSection(contentEl);
         
-        // Content preview/edit section
-        this.createContentSection(contentEl);
+        // Create main container with two columns
+        const mainContainer = contentEl.createDiv({ cls: 'wiki-main-container' });
+        
+        // Left column - File selection
+        const leftColumn = mainContainer.createDiv({ cls: 'wiki-left-column' });
+        this.createFileSelectionSection(leftColumn);
+        
+        // Right column - Content preview/edit
+        const rightColumn = mainContainer.createDiv({ cls: 'wiki-right-column' });
+        this.createContentSection(rightColumn);
         
         // Buttons
         this.createButtons(contentEl);
@@ -546,7 +589,16 @@ export class WikiPreviewModal extends Modal {
         
         if (this.availableFiles.length === 0) {
             const noFiles = this.fileSelectionContainer.createDiv({ cls: 'wiki-no-files' });
-            noFiles.textContent = 'No files found. Make sure you have work items pulled and the tree view is loaded.';
+            noFiles.innerHTML = `
+                <p><strong>⚠️ No files found</strong></p>
+                <p>Possible reasons:</p>
+                <ul>
+                    <li>Work items haven't been pulled from Azure DevOps yet</li>
+                    <li>The selected work item doesn't have an associated file</li>
+                    <li>The tree view data is still loading</li>
+                </ul>
+                <p><em>Try pulling work items first, then select a work item that has a file.</em></p>
+            `;
             return;
         }
         
@@ -598,11 +650,15 @@ export class WikiPreviewModal extends Modal {
     }
     
     private createContentSection(contentEl: HTMLElement) {
-        new Setting(contentEl)
-            .setName('Content')
-            .setDesc('Edit the generated markdown content as needed')
-            .setClass('wiki-preview-content-setting');
-            
+        const header = contentEl.createEl('h3', { text: 'Content Preview' });
+        header.style.marginTop = '0';
+        header.style.marginBottom = '10px';
+        
+        const description = contentEl.createEl('p', { 
+            text: 'Edit the generated markdown content as needed',
+            cls: 'wiki-content-description'
+        });
+        
         const editorContainer = contentEl.createDiv({ cls: 'wiki-preview-editor-container' });
         this.contentTextArea = editorContainer.createEl('textarea', {
             cls: 'wiki-preview-editor'
@@ -708,8 +764,9 @@ export class WikiPreviewModal extends Modal {
             style.id = 'wiki-preview-modal-styles';
             style.textContent = `
                 .modal {
-                    --modal-width: 900px;
-                    --modal-height: 95vh;
+                    --modal-width: 90vw;
+                    --modal-height: 90vh;
+                    max-width: 1600px;
                 }
                 
                 .wiki-preview-description {
@@ -718,21 +775,41 @@ export class WikiPreviewModal extends Modal {
                     margin-bottom: 20px;
                 }
                 
+                .wiki-main-container {
+                    display: flex;
+                    gap: 20px;
+                    height: 65vh;
+                    margin: 20px 0;
+                }
+                
+                .wiki-left-column {
+                    flex: 0 0 35%;
+                    min-width: 350px;
+                }
+                
+                .wiki-right-column {
+                    flex: 1;
+                    min-width: 500px;
+                }
+                
                 .wiki-file-selection-section {
-                    margin-bottom: 20px;
+                    height: 100%;
                     padding: 15px;
                     border: 1px solid var(--background-modifier-border);
                     border-radius: 8px;
                     background: var(--background-secondary);
+                    display: flex;
+                    flex-direction: column;
                 }
                 
                 .wiki-file-selection-container {
-                    max-height: 200px;
+                    flex: 1;
                     overflow-y: auto;
                     border: 1px solid var(--background-modifier-border-hover);
                     border-radius: 4px;
                     padding: 8px;
                     background: var(--background-primary);
+                    margin-top: 10px;
                 }
                 
                 .wiki-file-item {
@@ -768,11 +845,40 @@ export class WikiPreviewModal extends Modal {
                     font-family: var(--font-monospace);
                 }
                 
-                .wiki-no-files {
-                    padding: 20px;
+                .wiki-loading-message {
                     text-align: center;
                     color: var(--text-muted);
                     font-style: italic;
+                    margin: 20px 0;
+                    font-size: 14px;
+                }
+                
+                .wiki-error-message {
+                    text-align: center;
+                    color: var(--text-error);
+                    margin: 20px 0;
+                    font-weight: 500;
+                }
+                
+                .wiki-no-files {
+                    padding: 20px;
+                    color: var(--text-muted);
+                    background: var(--background-secondary);
+                    border-radius: 6px;
+                    border-left: 4px solid var(--text-warning);
+                }
+                
+                .wiki-no-files p {
+                    margin: 8px 0;
+                }
+                
+                .wiki-no-files ul {
+                    margin: 8px 0;
+                    padding-left: 20px;
+                }
+                
+                .wiki-no-files li {
+                    margin: 4px 0;
                 }
                 
                 .wiki-file-debug {
@@ -798,18 +904,23 @@ export class WikiPreviewModal extends Modal {
                     margin-top: 4px;
                 }
                 
-                .wiki-preview-content-setting .setting-item-info {
-                    display: none;
+                .wiki-content-description {
+                    color: var(--text-muted);
+                    font-size: 0.9em;
+                    margin: 0 0 10px 0;
                 }
                 
                 .wiki-preview-editor-container {
                     width: 100%;
-                    margin: 10px 0;
+                    height: calc(100% - 80px);
+                    display: flex;
+                    flex-direction: column;
                 }
                 
                 .wiki-preview-editor {
                     width: 100%;
-                    min-height: 300px;
+                    height: 100%;
+                    min-height: 400px;
                     padding: 12px;
                     font-family: var(--font-monospace);
                     font-size: 13px;
@@ -818,7 +929,8 @@ export class WikiPreviewModal extends Modal {
                     border-radius: 6px;
                     background: var(--background-primary);
                     color: var(--text-normal);
-                    resize: vertical;
+                    resize: none;
+                    flex: 1;
                 }
                 
                 .wiki-preview-editor:focus {

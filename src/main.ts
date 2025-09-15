@@ -1,6 +1,7 @@
 import { Plugin, Notice, WorkspaceLeaf, TFile } from 'obsidian';
 import { AzureDevOpsSettings, DEFAULT_SETTINGS } from './settings';
 import { AzureDevOpsTreeView, VIEW_TYPE_AZURE_DEVOPS_TREE } from './tree-view';
+import { WikiMakerView, VIEW_TYPE_WIKI_MAKER } from './wiki-maker-view';
 import { WorkItemModal } from './modals';
 import { AzureDevOpsSettingTab } from './settings-tab';
 import { AzureDevOpsAPI } from './api';
@@ -24,10 +25,15 @@ export default class AzureDevOpsPlugin extends Plugin {
         this.menuManager = new MenuManager(this.app, this.workItemManager);
         this.linkValidator = new AzureDevOpsLinkValidator(this.app, this.api, this.settings, this);
 
-        // Register the tree view
+        // Register views
         this.registerView(
             VIEW_TYPE_AZURE_DEVOPS_TREE,
             (leaf) => new AzureDevOpsTreeView(leaf, this)
+        );
+        
+        this.registerView(
+            VIEW_TYPE_WIKI_MAKER,
+            (leaf) => new WikiMakerView(leaf, this)
         );
 
         // Add ribbon icons
@@ -41,6 +47,10 @@ export default class AzureDevOpsPlugin extends Plugin {
 
         this.addRibbonIcon('git-branch', 'Azure DevOps Tree View', () => {
             this.activateTreeView();
+        });
+
+        this.addRibbonIcon('file-text', 'Wiki Maker', () => {
+            this.activateWikiMakerView();
         });
 
         this.addRibbonIcon('link', 'Validate Azure DevOps Links', () => {
@@ -140,6 +150,24 @@ export default class AzureDevOpsPlugin extends Plugin {
         } else {
             leaf = workspace.getRightLeaf(false);
             await leaf?.setViewState({ type: VIEW_TYPE_AZURE_DEVOPS_TREE, active: true });
+        }
+
+        if (leaf) {
+            workspace.revealLeaf(leaf);
+        }
+    }
+
+    async activateWikiMakerView() {
+        const { workspace } = this.app;
+
+        let leaf: WorkspaceLeaf | null = null;
+        const leaves = workspace.getLeavesOfType(VIEW_TYPE_WIKI_MAKER);
+
+        if (leaves.length > 0) {
+            leaf = leaves[0];
+        } else {
+            leaf = workspace.getRightLeaf(false);
+            await leaf?.setViewState({ type: VIEW_TYPE_WIKI_MAKER, active: true });
         }
 
         if (leaf) {
