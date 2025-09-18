@@ -39,6 +39,7 @@ export class AzureDevOpsTreeView extends ItemView {
     // Multi-select functionality properties
     private selectedNodes: Set<number> = new Set();
     private lastClickedNode: WorkItemNode | null = null;
+    private rangeStartNode: WorkItemNode | null = null;
 
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
@@ -1430,13 +1431,19 @@ export class AzureDevOpsTreeView extends ItemView {
             if (e.ctrlKey || e.metaKey) {
                 // Ctrl/Cmd click for toggle selection
                 this.toggleNodeSelection(node, row);
-            } else if (e.shiftKey && this.lastClickedNode) {
-                // Shift click for range selection
-                this.selectRangeToNode(node, row);
+                // Set range start if this is the first selection
+                if (this.selectedNodes.size === 1 && this.selectedNodes.has(node.id)) {
+                    this.rangeStartNode = node;
+                }
+            } else if (e.shiftKey && this.rangeStartNode) {
+                // Shift click for range selection - always use rangeStartNode as the anchor
+                this.selectRangeFromStartToNode(node, row);
             } else {
                 // Regular click - clear selection and select only this node
                 this.clearSelection();
                 this.selectNode(node, row);
+                // Set this as the new range start
+                this.rangeStartNode = node;
             }
             
             this.lastClickedNode = node;
@@ -1463,15 +1470,16 @@ export class AzureDevOpsTreeView extends ItemView {
         }
     }
 
-    selectRangeToNode(endNode: WorkItemNode, endRow: HTMLElement) {
-        if (!this.lastClickedNode) {
+    selectRangeFromStartToNode(endNode: WorkItemNode, endRow: HTMLElement) {
+        if (!this.rangeStartNode) {
             this.selectNode(endNode, endRow);
+            this.rangeStartNode = endNode;
             return;
         }
 
-        // Find all nodes between lastClickedNode and endNode
+        // Find all nodes between rangeStartNode and endNode
         const allNodes = this.getAllVisibleNodesInOrder();
-        const startIndex = allNodes.findIndex(n => n.id === this.lastClickedNode!.id);
+        const startIndex = allNodes.findIndex(n => n.id === this.rangeStartNode!.id);
         const endIndex = allNodes.findIndex(n => n.id === endNode.id);
 
         if (startIndex === -1 || endIndex === -1) {
@@ -1482,10 +1490,16 @@ export class AzureDevOpsTreeView extends ItemView {
         const rangeStart = Math.min(startIndex, endIndex);
         const rangeEnd = Math.max(startIndex, endIndex);
 
-        // Clear current selection
-        this.clearSelection();
+        // Clear all current selections
+        for (const nodeId of this.selectedNodes) {
+            const nodeElement = this.nodeElements.get(nodeId);
+            if (nodeElement) {
+                nodeElement.classList.remove('azure-tree-row--selected');
+            }
+        }
+        this.selectedNodes.clear();
 
-        // Select all nodes in range
+        // Select all nodes in the range from rangeStartNode to endNode
         for (let i = rangeStart; i <= rangeEnd; i++) {
             const node = allNodes[i];
             const nodeElement = this.nodeElements.get(node.id);
@@ -1503,6 +1517,7 @@ export class AzureDevOpsTreeView extends ItemView {
             }
         }
         this.selectedNodes.clear();
+        this.rangeStartNode = null;
         this.updateSelectionUI();
     }
 
@@ -1654,6 +1669,11 @@ export class AzureDevOpsTreeView extends ItemView {
             if (nodeElement) {
                 this.selectNode(node, nodeElement);
             }
+        }
+        
+        // Set the first visible node as the range start for future shift+click operations
+        if (visibleNodes.length > 0) {
+            this.rangeStartNode = visibleNodes[0];
         }
         
         new Notice(`Selected ${visibleNodes.length} visible work items`);
