@@ -1326,8 +1326,13 @@ export class AzureDevOpsTreeView extends ItemView {
         row.addEventListener('dragstart', (e) => {
             this.draggedNode = node;
             row.classList.add('azure-tree-row--dragging');
-            e.dataTransfer!.effectAllowed = 'move';
+            e.dataTransfer!.effectAllowed = 'copyMove';
             e.dataTransfer!.setData('text/plain', node.id.toString());
+            e.dataTransfer!.setData('application/x-workitem-node', JSON.stringify({
+                id: node.id,
+                title: node.title,
+                type: node.type
+            }));
         });
 
         row.addEventListener('dragend', () => {
@@ -1747,17 +1752,7 @@ export class AzureDevOpsTreeView extends ItemView {
                 });
         });
 
-        menu.addSeparator();
 
-        menu.addItem((item) => {
-            item.setTitle('Create Wiki Note')
-                .setIcon('file-plus')
-                .onClick(async () => {
-                    if (this.plugin.workItemManager) {
-                        await this.plugin.workItemManager.createWikiNoteFromTreeNode(node.id);
-                    }
-                });
-        });
 
         menu.showAtMouseEvent(event);
     }

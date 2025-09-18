@@ -6,20 +6,21 @@ interface WikiFile {
     id: number;
     title: string;
     filePath: string;
-    isParent: boolean;
     selected: boolean;
     content: string;
     exists: boolean;
+    order: number;
 }
 
 export class WikiMakerView extends ItemView {
     plugin: any;
     private availableFiles: WikiFile[] = [];
-    private parentNode: any = null;
+    private workItems: any[] = [];
     private contentTextArea: HTMLTextAreaElement | null = null;
     private filenameInput: HTMLInputElement | null = null;
     private fileSelectionContainer: HTMLElement | null = null;
     private filesInitialized: boolean = false;
+    private dropZoneInitialized: boolean = false;
 
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
@@ -43,7 +44,13 @@ export class WikiMakerView extends ItemView {
         container.empty();
         container.createEl('h2', { text: 'Wiki Maker' });
 
-        if (!this.parentNode) {
+        // Set up drop zone only once on the main container
+        if (!this.dropZoneInitialized) {
+            this.setupDropZone(this.containerEl);
+            this.dropZoneInitialized = true;
+        }
+
+        if (this.availableFiles.length === 0) {
             this.showNoDataMessage(container);
             return;
         }
@@ -52,11 +59,11 @@ export class WikiMakerView extends ItemView {
     }
 
     private showNoDataMessage(container: Element) {
-        const messageContainer = container.createDiv({ cls: 'wiki-maker-no-data' });
+        const messageContainer = container.createDiv({ cls: 'wiki-maker-no-data wiki-maker-drop-zone' });
         
         messageContainer.createEl('h3', { text: '📝 Wiki Maker' });
         messageContainer.createEl('p', { 
-            text: 'Right-click on a work item in the Azure DevOps Tree view and select "Create Wiki Note" to get started.' 
+            text: 'Drag a work item from the Azure DevOps Tree view here to create a wiki note.' 
         });
         
         const instructions = messageContainer.createDiv({ cls: 'wiki-maker-instructions' });
@@ -64,56 +71,50 @@ export class WikiMakerView extends ItemView {
         const list = instructions.createEl('ul');
         list.createEl('li', { text: 'Open the Azure DevOps Tree view' });
         list.createEl('li', { text: 'Pull work items from Azure DevOps' });
-        list.createEl('li', { text: 'Right-click on any work item' });
-        list.createEl('li', { text: 'Select "Create Wiki Note"' });
-        list.createEl('li', { text: 'The Wiki Maker will open with the selected work item and its children' });
+        list.createEl('li', { text: 'Drag any work item from the tree view' });
+        list.createEl('li', { text: 'Drop it into this Wiki Maker view' });
+        list.createEl('li', { text: 'The Wiki Maker will load the selected work item' });
+        
+        // Drop zone is set up on the main container
     }
 
-    async loadWorkItemData(parentNode: any) {
-        this.parentNode = parentNode;
+    async loadWorkItemData(initialNode: any) {
         this.availableFiles = [];
         
         console.log('WikiMakerView: Loading work item data for:', {
-            id: parentNode.id,
-            title: parentNode.title,
-            filePath: parentNode.filePath,
-            hasChildren: !!parentNode.children,
-            childrenCount: parentNode.children?.length || 0
+            id: initialNode.id,
+            title: initialNode.title,
+            filePath: initialNode.filePath
         });
 
-        // Add parent file
-        const parentContent = await this.loadFileContent(parentNode.filePath);
-        this.availableFiles.push({
-            id: parentNode.id,
-            title: parentNode.title,
-            filePath: parentNode.filePath || '',
-            isParent: true,
-            selected: true,
-            content: parentContent.content,
-            exists: parentContent.exists
-        });
-
-        // Add children files
-        if (parentNode.children && parentNode.children.length > 0) {
-            for (const child of parentNode.children) {
-                const childContent = await this.loadFileContent(child.filePath);
-                this.availableFiles.push({
-                    id: child.id,
-                    title: child.title,
-                    filePath: child.filePath || '',
-                    isParent: false,
-                    selected: true,
-                    content: childContent.content,
-                    exists: childContent.exists
-                });
-            }
-        }
+        // Add initial work item
+        await this.addWorkItemToList(initialNode, 0);
 
         this.filesInitialized = true;
         console.log('WikiMakerView: Loaded', this.availableFiles.length, 'files');
 
         // Refresh the view
         this.onOpen();
+    }
+
+    async addWorkItemToList(workItem: any, order?: number) {
+        const content = await this.loadFileContent(workItem.filePath);
+        const newOrder = order !== undefined ? order : this.availableFiles.length;
+        
+        this.availableFiles.push({
+            id: workItem.id,
+            title: workItem.title,
+            filePath: workItem.filePath || '',
+            selected: true,
+            content: content.content,
+            exists: content.exists,
+            order: newOrder
+        });
+
+        // Sort by order
+        this.availableFiles.sort((a, b) => a.order - b.order);
+        this.refreshFileSelection();
+        this.updatePreview();
     }
 
     private async loadFileContent(filePath: string): Promise<{content: string, exists: boolean}> {
@@ -189,10 +190,7 @@ export class WikiMakerView extends ItemView {
         const section = container.createDiv({ cls: 'wiki-maker-file-selection' });
         section.createEl('h3', { text: 'Select Files to Include' });
 
-        const fileCount = section.createEl('p', {
-            text: `Found ${this.availableFiles.length} files (${this.availableFiles.filter(f => f.isParent).length} parent, ${this.availableFiles.filter(f => !f.isParent).length} children)`,
-            cls: 'wiki-maker-file-count'
-        });
+
 
         this.fileSelectionContainer = section.createDiv({ cls: 'wiki-maker-file-list' });
 
@@ -205,9 +203,22 @@ export class WikiMakerView extends ItemView {
             return;
         }
 
-        for (const file of this.availableFiles) {
-            const fileItem = this.fileSelectionContainer.createDiv({ cls: 'wiki-maker-file-item' });
+        this.renderFileList();
+    }
+
+    private renderFileList() {
+        if (!this.fileSelectionContainer) return;
+        
+        this.availableFiles.forEach((file, index) => {
+            const fileItem = this.fileSelectionContainer!.createDiv({ cls: 'wiki-maker-file-item' });
+            fileItem.dataset.fileId = file.id.toString();
             
+            // Drag handle for reordering
+            const dragHandle = fileItem.createEl('span', { cls: 'wiki-maker-drag-handle' });
+            dragHandle.textContent = '⋮⋮';
+            dragHandle.title = 'Drag to reorder';
+            
+            // Checkbox
             const checkbox = fileItem.createEl('input', { type: 'checkbox' });
             checkbox.checked = file.selected;
             checkbox.addEventListener('change', () => {
@@ -215,26 +226,144 @@ export class WikiMakerView extends ItemView {
                 this.updatePreview();
             });
 
-            const label = fileItem.createEl('label');
-            const statusIcon = file.isParent ? '📋' : '📄';
-            const statusText = file.isParent ? 'Parent' : 'Child';
-            const contentStatus = file.content ? '✅' : '❌';
+            // Content container
+            const contentContainer = fileItem.createDiv({ cls: 'wiki-maker-file-content' });
+            
+            const label = contentContainer.createEl('label');
+            const statusIcon = '📄';
             const existsStatus = file.exists ? '' : ' (File not found)';
 
-            label.innerHTML = `${statusIcon} <strong>[${file.id}]</strong> ${file.title} <em>(${statusText})</em> ${contentStatus}${existsStatus}`;
+            label.innerHTML = `${statusIcon} <strong>[${file.id}]</strong> ${file.title}${existsStatus}`;
             label.prepend(checkbox);
 
+            // Status message
             if (!file.exists) {
-                const warning = fileItem.createEl('div', { cls: 'wiki-maker-file-warning' });
+                const warning = contentContainer.createEl('div', { cls: 'wiki-maker-file-warning' });
                 warning.textContent = '⚠️ File does not exist - may need to pull work items first';
             } else if (!file.content) {
-                const warning = fileItem.createEl('div', { cls: 'wiki-maker-file-warning' });
+                const warning = contentContainer.createEl('div', { cls: 'wiki-maker-file-warning' });
                 warning.textContent = '⚠️ No description found in this file';
-            } else {
-                const success = fileItem.createEl('div', { cls: 'wiki-maker-file-success' });
-                success.textContent = `✅ Description found (${file.content.length} characters)`;
             }
+
+            // Control buttons
+            const controls = fileItem.createDiv({ cls: 'wiki-maker-file-controls' });
+            
+            // Move up button
+            if (index > 0) {
+                const moveUpBtn = controls.createEl('button', { cls: 'wiki-maker-control-btn' });
+                moveUpBtn.textContent = '↑';
+                moveUpBtn.title = 'Move up';
+                moveUpBtn.onclick = () => this.moveFile(index, index - 1);
+            }
+            
+            // Move down button
+            if (index < this.availableFiles.length - 1) {
+                const moveDownBtn = controls.createEl('button', { cls: 'wiki-maker-control-btn' });
+                moveDownBtn.textContent = '↓';
+                moveDownBtn.title = 'Move down';
+                moveDownBtn.onclick = () => this.moveFile(index, index + 1);
+            }
+            
+            // Remove button
+            const removeBtn = controls.createEl('button', { cls: 'wiki-maker-control-btn wiki-maker-remove-btn' });
+            removeBtn.textContent = '✕';
+            removeBtn.title = 'Remove from list';
+            removeBtn.onclick = () => this.removeFile(index);
+
+            // Add drag and drop functionality
+            this.setupFileDragAndDrop(fileItem, index);
+        });
+    }
+
+    private moveFile(fromIndex: number, toIndex: number) {
+        if (fromIndex < 0 || fromIndex >= this.availableFiles.length || 
+            toIndex < 0 || toIndex >= this.availableFiles.length) {
+            return;
         }
+
+        const [movedFile] = this.availableFiles.splice(fromIndex, 1);
+        this.availableFiles.splice(toIndex, 0, movedFile);
+
+        // Update order values
+        this.availableFiles.forEach((file, index) => {
+            file.order = index;
+        });
+
+        this.refreshFileSelection();
+        this.updatePreview();
+    }
+
+    private removeFile(index: number) {
+        if (index < 0 || index >= this.availableFiles.length) {
+            return;
+        }
+
+        const removedFile = this.availableFiles[index];
+        this.availableFiles.splice(index, 1);
+
+        // Update order values
+        this.availableFiles.forEach((file, idx) => {
+            file.order = idx;
+        });
+
+        this.refreshFileSelection();
+        this.updatePreview();
+
+        new Notice(`Removed [${removedFile.id}] ${removedFile.title} from wiki list`);
+    }
+
+    private setupFileDragAndDrop(fileItem: HTMLElement, index: number) {
+        fileItem.draggable = true;
+        
+        fileItem.addEventListener('dragstart', (e: DragEvent) => {
+            if (e.dataTransfer) {
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', index.toString());
+            }
+            fileItem.classList.add('wiki-maker-file-dragging');
+        });
+
+        fileItem.addEventListener('dragend', () => {
+            fileItem.classList.remove('wiki-maker-file-dragging');
+            this.removeAllDropIndicators();
+        });
+
+        fileItem.addEventListener('dragover', (e: DragEvent) => {
+            e.preventDefault();
+            if (e.dataTransfer) {
+                e.dataTransfer.dropEffect = 'move';
+            }
+            this.showDropIndicator(fileItem, true);
+        });
+
+        fileItem.addEventListener('dragleave', () => {
+            this.showDropIndicator(fileItem, false);
+        });
+
+        fileItem.addEventListener('drop', (e: DragEvent) => {
+            e.preventDefault();
+            this.showDropIndicator(fileItem, false);
+            
+            const draggedIndex = parseInt(e.dataTransfer?.getData('text/plain') || '-1');
+            if (draggedIndex !== -1 && draggedIndex !== index) {
+                this.moveFile(draggedIndex, index);
+            }
+        });
+    }
+
+    private showDropIndicator(element: HTMLElement, show: boolean) {
+        if (show) {
+            element.classList.add('wiki-maker-file-drop-target');
+        } else {
+            element.classList.remove('wiki-maker-file-drop-target');
+        }
+    }
+
+    private removeAllDropIndicators() {
+        const items = this.fileSelectionContainer?.querySelectorAll('.wiki-maker-file-item') || [];
+        items.forEach(item => {
+            (item as HTMLElement).classList.remove('wiki-maker-file-drop-target');
+        });
     }
 
     private createFilenameSection(container: Element) {
@@ -245,7 +374,7 @@ export class WikiMakerView extends ItemView {
             .setDesc('Name for the wiki note (without .md extension)')
             .addText(text => {
                 this.filenameInput = text.inputEl;
-                text.setValue(this.sanitizeFileName(this.parentNode?.title || 'wiki-note'))
+                text.setValue(this.sanitizeFileName(this.availableFiles[0]?.title || 'wiki-note'))
                     .setPlaceholder('my-wiki-note');
             });
     }
@@ -258,9 +387,14 @@ export class WikiMakerView extends ItemView {
             cls: 'mod-secondary'
         });
         refreshBtn.onclick = async () => {
-            if (this.parentNode) {
-                await this.loadWorkItemData(this.parentNode);
+            // Refresh all loaded work items
+            for (const file of this.availableFiles) {
+                const content = await this.loadFileContent(file.filePath);
+                file.content = content.content;
+                file.exists = content.exists;
             }
+            this.refreshFileSelection();
+            this.updatePreview();
         };
 
         const selectAllBtn = buttonContainer.createEl('button', {
@@ -324,32 +458,27 @@ export class WikiMakerView extends ItemView {
 
         let markdown = '';
         const selectedFiles = this.availableFiles.filter(f => f.selected);
-        const parentFiles = selectedFiles.filter(f => f.isParent);
-        const childFiles = selectedFiles.filter(f => !f.isParent);
 
         if (selectedFiles.length === 0) {
-            markdown = '# No files selected\n\nPlease select at least one file to include in the wiki note.';
+            markdown = '# No work items selected\n\nPlease select at least one work item to include in the wiki note.';
         } else {
-            // Add parent content
-            if (parentFiles.length > 0) {
-                const parent = parentFiles[0];
-                markdown += `# ${parent.title}\n\n`;
-                if (parent.content) {
-                    markdown += `${parent.content}\n\n`;
-                } else {
-                    markdown += `*No description available for this work item.*\n\n`;
-                }
+            // Add title if there's only one item, otherwise use a generic title
+            if (selectedFiles.length === 1) {
+                markdown += `# ${selectedFiles[0].title}\n\n`;
+            } else {
+                markdown += `# Wiki Note\n\n`;
             }
 
-            // Add children content
-            if (childFiles.length > 0) {
-                for (const child of childFiles) {
-                    markdown += `## ${child.title}\n\n`;
-                    if (child.content) {
-                        markdown += `${child.content}\n\n`;
-                    } else {
-                        markdown += `*No description available for this work item.*\n\n`;
-                    }
+            // Add each selected work item as a section
+            for (const file of selectedFiles) {
+                if (selectedFiles.length > 1) {
+                    markdown += `## [${file.id}] ${file.title}\n\n`;
+                }
+                
+                if (file.content) {
+                    markdown += `${file.content}\n\n`;
+                } else {
+                    markdown += `*No description available for this work item.*\n\n`;
                 }
             }
         }
@@ -366,42 +495,13 @@ export class WikiMakerView extends ItemView {
         if (this.availableFiles.length === 0) {
             const noFiles = this.fileSelectionContainer.createDiv({ cls: 'wiki-maker-no-files' });
             noFiles.innerHTML = `
-                <p><strong>⚠️ No files found</strong></p>
-                <p>Make sure you have pulled work items from Azure DevOps and the selected work item has an associated file.</p>
+                <p><strong>⚠️ No work items found</strong></p>
+                <p>Drag work items from the Azure DevOps tree view to add them to this list.</p>
             `;
             return;
         }
 
-        for (const file of this.availableFiles) {
-            const fileItem = this.fileSelectionContainer.createDiv({ cls: 'wiki-maker-file-item' });
-            
-            const checkbox = fileItem.createEl('input', { type: 'checkbox' });
-            checkbox.checked = file.selected;
-            checkbox.addEventListener('change', () => {
-                file.selected = checkbox.checked;
-                this.updatePreview();
-            });
-
-            const label = fileItem.createEl('label');
-            const statusIcon = file.isParent ? '📋' : '📄';
-            const statusText = file.isParent ? 'Parent' : 'Child';
-            const contentStatus = file.content ? '✅' : '❌';
-            const existsStatus = file.exists ? '' : ' (File not found)';
-
-            label.innerHTML = `${statusIcon} <strong>[${file.id}]</strong> ${file.title} <em>(${statusText})</em> ${contentStatus}${existsStatus}`;
-            label.prepend(checkbox);
-
-            if (!file.exists) {
-                const warning = fileItem.createEl('div', { cls: 'wiki-maker-file-warning' });
-                warning.textContent = '⚠️ File does not exist - may need to pull work items first';
-            } else if (!file.content) {
-                const warning = fileItem.createEl('div', { cls: 'wiki-maker-file-warning' });
-                warning.textContent = '⚠️ No description found in this file';
-            } else {
-                const success = fileItem.createEl('div', { cls: 'wiki-maker-file-success' });
-                success.textContent = `✅ Description found (${file.content.length} characters)`;
-            }
-        }
+        this.renderFileList();
     }
 
     private async createWikiNote() {
@@ -428,6 +528,82 @@ export class WikiMakerView extends ItemView {
             .replace(/\s+/g, '-')
             .toLowerCase()
             .substring(0, 50);
+    }
+
+    private setupDropZone(container: Element) {
+        let dragCounter = 0;
+        
+        container.addEventListener('dragenter', (e: DragEvent) => {
+            e.preventDefault();
+            dragCounter++;
+            if (e.dataTransfer) {
+                e.dataTransfer.dropEffect = 'copy';
+            }
+            container.classList.add('wiki-maker-drop-zone--active');
+        });
+
+        container.addEventListener('dragover', (e: DragEvent) => {
+            e.preventDefault();
+            if (e.dataTransfer) {
+                e.dataTransfer.dropEffect = 'copy';
+            }
+        });
+
+        container.addEventListener('dragleave', (e: DragEvent) => {
+            e.preventDefault();
+            dragCounter--;
+            if (dragCounter === 0) {
+                container.classList.remove('wiki-maker-drop-zone--active');
+            }
+        });
+
+        container.addEventListener('drop', async (e: DragEvent) => {
+            e.preventDefault();
+            dragCounter = 0;
+            container.classList.remove('wiki-maker-drop-zone--active');
+            
+            const workItemId = e.dataTransfer?.getData('text/plain');
+            if (workItemId) {
+                await this.handleWorkItemDrop(parseInt(workItemId));
+            }
+        });
+    }
+
+    private async handleWorkItemDrop(workItemId: number) {
+        const treeViewLeaf = this.app.workspace.getLeavesOfType('azure-devops-tree-view')[0];
+        if (!treeViewLeaf?.view) {
+            new Notice('❌ Could not find Azure DevOps tree view');
+            return;
+        }
+
+        const treeView = treeViewLeaf.view as any;
+        if (!treeView.allNodes || typeof treeView.allNodes.get !== 'function') {
+            new Notice('❌ Tree view not properly loaded');
+            return;
+        }
+
+        const node = treeView.allNodes.get(workItemId);
+        if (!node) {
+            new Notice(`❌ Work item ${workItemId} not found in tree`);
+            return;
+        }
+
+        // Check if this work item is already in the list
+        const existingIndex = this.availableFiles.findIndex(file => file.id === node.id);
+        if (existingIndex !== -1) {
+            new Notice(`⚠️ Work item [${node.id}] ${node.title} is already in the list`);
+            return;
+        }
+
+        new Notice(`📝 Adding [${node.id}] ${node.title} to wiki maker...`);
+        
+        // If this is the first item, initialize the view
+        if (this.availableFiles.length === 0) {
+            await this.loadWorkItemData(node);
+        } else {
+            // Just add the new item to the existing list
+            await this.addWorkItemToList(node);
+        }
     }
 
     private addCustomStyles() {
@@ -565,6 +741,36 @@ export class WikiMakerView extends ItemView {
                     color: var(--text-muted);
                 }
 
+                .wiki-maker-drop-zone {
+                    border: 2px dashed var(--background-modifier-border);
+                    border-radius: 12px;
+                    transition: all 0.2s ease;
+                    position: relative;
+                }
+
+                .wiki-maker-drop-zone--active {
+                    border-color: var(--interactive-accent);
+                    background: var(--interactive-accent-hover);
+                    transform: scale(1.02);
+                }
+
+                .wiki-maker-drop-zone::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: transparent;
+                    pointer-events: none;
+                    border-radius: 10px;
+                }
+
+                .wiki-maker-drop-zone--active::before {
+                    background: var(--interactive-accent);
+                    opacity: 0.1;
+                }
+
                 .wiki-maker-instructions {
                     margin-top: 20px;
                     text-align: left;
@@ -604,5 +810,6 @@ export class WikiMakerView extends ItemView {
     async onClose() {
         const { containerEl } = this;
         containerEl.empty();
+        this.dropZoneInitialized = false;
     }
 }
