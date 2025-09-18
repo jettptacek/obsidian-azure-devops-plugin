@@ -36,6 +36,10 @@ export class AzureDevOpsTreeView extends ItemView {
     private selectedSearchIndex: number = -1;
     private searchDebounceTimer: any = null;
 
+    // Multi-select functionality properties
+    private selectedNodes: Set<number> = new Set();
+    private lastClickedNode: WorkItemNode | null = null;
+
     constructor(leaf: WorkspaceLeaf, plugin: any) {
         super(leaf);
         this.plugin = plugin;
@@ -704,6 +708,7 @@ export class AzureDevOpsTreeView extends ItemView {
         
         await this.buildTreeView(treeContainer);
         this.startActiveFileWatcher();
+        this.setupKeyboardShortcuts();
     }
 
     async refreshTreeView() {
@@ -1129,6 +1134,7 @@ export class AzureDevOpsTreeView extends ItemView {
 
         this.attachDragHandlers(row, node);
         this.attachHoverHandlers(row);
+        this.attachMultiSelectHandlers(row, node);
 
         const expandBtn = this.createExpandButton(node);
         row.appendChild(expandBtn);
@@ -1327,16 +1333,53 @@ export class AzureDevOpsTreeView extends ItemView {
             this.draggedNode = node;
             row.classList.add('azure-tree-row--dragging');
             e.dataTransfer!.effectAllowed = 'copyMove';
+            
+            // Check if this node is part of a multi-selection
+            const selectedNodes = this.getSelectedNodesIncludingCurrent(node);
+            const draggedNodes = selectedNodes.length > 1 ? selectedNodes : [node];
+            
+            // Set data for both single and multi-node drag
             e.dataTransfer!.setData('text/plain', node.id.toString());
             e.dataTransfer!.setData('application/x-workitem-node', JSON.stringify({
                 id: node.id,
                 title: node.title,
                 type: node.type
             }));
+            
+            // Add multi-node data for Wiki Maker
+            if (draggedNodes.length > 1) {
+                e.dataTransfer!.setData('application/x-workitem-nodes', JSON.stringify(
+                    draggedNodes.map(n => ({
+                        id: n.id,
+                        title: n.title,
+                        type: n.type,
+                        filePath: n.filePath
+                    }))
+                ));
+            }
+            
+            // Visual feedback for multi-selection
+            if (draggedNodes.length > 1) {
+                selectedNodes.forEach(selectedNode => {
+                    const selectedElement = this.nodeElements.get(selectedNode.id);
+                    if (selectedElement) {
+                        selectedElement.classList.add('azure-tree-row--dragging');
+                    }
+                });
+            }
         });
 
         row.addEventListener('dragend', () => {
             row.classList.remove('azure-tree-row--dragging');
+            
+            // Clean up multi-selection drag visual feedback
+            for (const nodeId of this.selectedNodes) {
+                const selectedElement = this.nodeElements.get(nodeId);
+                if (selectedElement) {
+                    selectedElement.classList.remove('azure-tree-row--dragging');
+                }
+            }
+            
             this.draggedNode = null;
             this.removeAllDropIndicators();
         });
@@ -1375,6 +1418,245 @@ export class AzureDevOpsTreeView extends ItemView {
                 row.classList.remove('azure-tree-row--hover');
             }
         });
+    }
+
+    attachMultiSelectHandlers(row: HTMLElement, node: WorkItemNode) {
+        row.addEventListener('click', (e) => {
+            // Prevent default expand/collapse behavior when multi-selecting
+            if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                e.stopPropagation();
+            }
+
+            if (e.ctrlKey || e.metaKey) {
+                // Ctrl/Cmd click for toggle selection
+                this.toggleNodeSelection(node, row);
+            } else if (e.shiftKey && this.lastClickedNode) {
+                // Shift click for range selection
+                this.selectRangeToNode(node, row);
+            } else {
+                // Regular click - clear selection and select only this node
+                this.clearSelection();
+                this.selectNode(node, row);
+            }
+            
+            this.lastClickedNode = node;
+        });
+    }
+
+    selectNode(node: WorkItemNode, row: HTMLElement) {
+        this.selectedNodes.add(node.id);
+        row.classList.add('azure-tree-row--selected');
+        this.updateSelectionUI();
+    }
+
+    deselectNode(node: WorkItemNode, row: HTMLElement) {
+        this.selectedNodes.delete(node.id);
+        row.classList.remove('azure-tree-row--selected');
+        this.updateSelectionUI();
+    }
+
+    toggleNodeSelection(node: WorkItemNode, row: HTMLElement) {
+        if (this.selectedNodes.has(node.id)) {
+            this.deselectNode(node, row);
+        } else {
+            this.selectNode(node, row);
+        }
+    }
+
+    selectRangeToNode(endNode: WorkItemNode, endRow: HTMLElement) {
+        if (!this.lastClickedNode) {
+            this.selectNode(endNode, endRow);
+            return;
+        }
+
+        // Find all nodes between lastClickedNode and endNode
+        const allNodes = this.getAllVisibleNodesInOrder();
+        const startIndex = allNodes.findIndex(n => n.id === this.lastClickedNode!.id);
+        const endIndex = allNodes.findIndex(n => n.id === endNode.id);
+
+        if (startIndex === -1 || endIndex === -1) {
+            this.selectNode(endNode, endRow);
+            return;
+        }
+
+        const rangeStart = Math.min(startIndex, endIndex);
+        const rangeEnd = Math.max(startIndex, endIndex);
+
+        // Clear current selection
+        this.clearSelection();
+
+        // Select all nodes in range
+        for (let i = rangeStart; i <= rangeEnd; i++) {
+            const node = allNodes[i];
+            const nodeElement = this.nodeElements.get(node.id);
+            if (nodeElement) {
+                this.selectNode(node, nodeElement);
+            }
+        }
+    }
+
+    clearSelection() {
+        for (const nodeId of this.selectedNodes) {
+            const nodeElement = this.nodeElements.get(nodeId);
+            if (nodeElement) {
+                nodeElement.classList.remove('azure-tree-row--selected');
+            }
+        }
+        this.selectedNodes.clear();
+        this.updateSelectionUI();
+    }
+
+    getAllVisibleNodesInOrder(): WorkItemNode[] {
+        const result: WorkItemNode[] = [];
+        
+        const traverse = (nodes: WorkItemNode[]) => {
+            for (const node of nodes) {
+                result.push(node);
+                if (node.children.length > 0 && this.expandedNodes.has(node.id)) {
+                    traverse(node.children);
+                }
+            }
+        };
+
+        traverse(this.workItemsTree);
+        return result;
+    }
+
+    updateSelectionUI() {
+        // Update any UI elements that show selection count
+        const selectionCount = this.selectedNodes.size;
+        
+        // You can add visual indicators here, like updating a status bar
+        if (selectionCount > 1) {
+            console.log(`${selectionCount} items selected`);
+        }
+    }
+
+    getSelectedNodesIncludingCurrent(currentNode: WorkItemNode): WorkItemNode[] {
+        const selectedNodes: WorkItemNode[] = [];
+        
+        // If current node is selected or there are multiple selections, use selected nodes
+        if (this.selectedNodes.has(currentNode.id) && this.selectedNodes.size > 1) {
+            for (const nodeId of this.selectedNodes) {
+                const node = this.allNodes.get(nodeId);
+                if (node) {
+                    selectedNodes.push(node);
+                }
+            }
+        } else {
+            // Otherwise just use the current node
+            selectedNodes.push(currentNode);
+        }
+        
+        return selectedNodes;
+    }
+
+    async addToWikiMaker(nodes: WorkItemNode[]) {
+        // Find or create the Wiki Maker view
+        let wikiMakerLeaf = this.app.workspace.getLeavesOfType('azure-devops-wiki-maker')[0];
+        
+        if (!wikiMakerLeaf) {
+            // Create a new Wiki Maker view if it doesn't exist
+            const rightLeaf = this.app.workspace.getRightLeaf(false);
+            if (!rightLeaf) {
+                new Notice('❌ Could not create Wiki Maker view');
+                return;
+            }
+            wikiMakerLeaf = rightLeaf;
+            await wikiMakerLeaf.setViewState({
+                type: 'azure-devops-wiki-maker',
+                active: true
+            });
+        }
+
+        const wikiMakerView = wikiMakerLeaf.view as any;
+        if (!wikiMakerView) {
+            new Notice('❌ Could not access Wiki Maker view');
+            return;
+        }
+
+        // Activate the Wiki Maker view
+        this.app.workspace.revealLeaf(wikiMakerLeaf);
+
+        // Add each node to the Wiki Maker
+        if (nodes.length === 1) {
+            // For single item, use the existing loadWorkItemData method
+            await wikiMakerView.loadWorkItemData(nodes[0]);
+            new Notice(`📝 Added [${nodes[0].id}] ${nodes[0].title} to Wiki Maker`);
+        } else {
+            // For multiple items, add them one by one
+            let addedCount = 0;
+            for (const node of nodes) {
+                try {
+                    if (wikiMakerView.availableFiles && wikiMakerView.availableFiles.length === 0 && addedCount === 0) {
+                        // First item - initialize the view
+                        await wikiMakerView.loadWorkItemData(node);
+                    } else {
+                        // Subsequent items - add to existing list
+                        await wikiMakerView.addWorkItemToList(node);
+                    }
+                    addedCount++;
+                } catch (error) {
+                    console.error(`Error adding work item ${node.id} to Wiki Maker:`, error);
+                }
+            }
+            
+            if (addedCount === nodes.length) {
+                new Notice(`📝 Added ${addedCount} work items to Wiki Maker`);
+            } else {
+                new Notice(`📝 Added ${addedCount}/${nodes.length} work items to Wiki Maker`);
+            }
+        }
+
+        // Clear selection after adding to Wiki Maker
+        this.clearSelection();
+    }
+
+    setupKeyboardShortcuts() {
+        this.registerDomEvent(document, 'keydown', (e: KeyboardEvent) => {
+            // Only handle shortcuts when the tree view is focused
+            if (!this.containerEl.contains(document.activeElement)) {
+                return;
+            }
+
+            // Escape key to clear selection
+            if (e.key === 'Escape') {
+                this.clearSelection();
+                e.preventDefault();
+                return;
+            }
+
+            // Ctrl+A to select all visible items
+            if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+                e.preventDefault();
+                this.selectAllVisibleNodes();
+                return;
+            }
+
+            // Delete key to add selected items to Wiki Maker
+            if (e.key === 'Enter' && this.selectedNodes.size > 0) {
+                e.preventDefault();
+                const selectedNodeObjects = Array.from(this.selectedNodes).map(id => this.allNodes.get(id)).filter(Boolean) as WorkItemNode[];
+                if (selectedNodeObjects.length > 0) {
+                    this.addToWikiMaker(selectedNodeObjects);
+                }
+                return;
+            }
+        });
+    }
+
+    selectAllVisibleNodes() {
+        this.clearSelection();
+        const visibleNodes = this.getAllVisibleNodesInOrder();
+        
+        for (const node of visibleNodes) {
+            const nodeElement = this.nodeElements.get(node.id);
+            if (nodeElement) {
+                this.selectNode(node, nodeElement);
+            }
+        }
+        
+        new Notice(`Selected ${visibleNodes.length} visible work items`);
     }
 
     toggleNodeOptimized(node: WorkItemNode) {
@@ -1752,7 +2034,31 @@ export class AzureDevOpsTreeView extends ItemView {
                 });
         });
 
+        menu.addSeparator();
 
+        // Add to Wiki Maker options
+        const selectedNodes = this.getSelectedNodesIncludingCurrent(node);
+        const itemCount = selectedNodes.length;
+        
+        if (itemCount === 1) {
+            menu.addItem((item) => {
+                item.setTitle('Add to Wiki Maker')
+                    .setIcon('file-plus')
+                    .onClick(() => this.addToWikiMaker([node]));
+            });
+        } else if (itemCount > 1) {
+            menu.addItem((item) => {
+                item.setTitle(`Add ${itemCount} Items to Wiki Maker`)
+                    .setIcon('file-plus')
+                    .onClick(() => this.addToWikiMaker(selectedNodes));
+            });
+
+            menu.addItem((item) => {
+                item.setTitle('Add Only This Item to Wiki Maker')
+                    .setIcon('file-plus')
+                    .onClick(() => this.addToWikiMaker([node]));
+            });
+        }
 
         menu.showAtMouseEvent(event);
     }

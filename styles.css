@@ -377,6 +377,42 @@
     border-top: 2px solid var(--interactive-accent);
 }
 
+.azure-tree-row--selected {
+    background-color: var(--interactive-accent) !important;
+    color: var(--text-on-accent) !important;
+    border-radius: 4px !important;
+    position: relative !important;
+}
+
+.azure-tree-row--selected::before {
+    content: '';
+    position: absolute;
+    left: -2px;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--interactive-accent);
+    border-radius: 2px;
+}
+
+.azure-tree-row--selected .azure-tree-title-text {
+    color: var(--text-on-accent) !important;
+}
+
+.azure-tree-row--selected .azure-tree-state-badge,
+.azure-tree-row--selected .azure-tree-priority-badge,
+.azure-tree-row--selected .azure-tree-assignee-badge {
+    background-color: rgba(255, 255, 255, 0.2) !important;
+    color: var(--text-on-accent) !important;
+    border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+.azure-tree-row--selected .azure-tree-pending-badge {
+    background-color: rgba(255, 255, 255, 0.9) !important;
+    color: var(--interactive-accent) !important;
+    border-color: rgba(255, 255, 255, 0.7) !important;
+}
+
 .azure-tree-pending-change {
     background-color: #fff3cd !important;
     border-left: 4px solid #ffc107 !important;

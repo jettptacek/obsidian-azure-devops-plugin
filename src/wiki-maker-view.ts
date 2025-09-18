@@ -562,6 +562,14 @@ export class WikiMakerView extends ItemView {
             dragCounter = 0;
             container.classList.remove('wiki-maker-drop-zone--active');
             
+            // Check for multiple nodes first
+            const multiNodeData = e.dataTransfer?.getData('application/x-workitem-nodes');
+            if (multiNodeData) {
+                await this.handleMultipleWorkItemsDrop(JSON.parse(multiNodeData));
+                return;
+            }
+            
+            // Fall back to single node
             const workItemId = e.dataTransfer?.getData('text/plain');
             if (workItemId) {
                 await this.handleWorkItemDrop(parseInt(workItemId));
@@ -604,6 +612,73 @@ export class WikiMakerView extends ItemView {
             // Just add the new item to the existing list
             await this.addWorkItemToList(node);
         }
+    }
+
+    private async handleMultipleWorkItemsDrop(workItemsData: any[]) {
+        if (!workItemsData || workItemsData.length === 0) {
+            new Notice('❌ No work items to add');
+            return;
+        }
+
+        const treeViewLeaf = this.app.workspace.getLeavesOfType('azure-devops-tree-view')[0];
+        if (!treeViewLeaf?.view) {
+            new Notice('❌ Could not find Azure DevOps tree view');
+            return;
+        }
+
+        const treeView = treeViewLeaf.view as any;
+        if (!treeView.allNodes || typeof treeView.allNodes.get !== 'function') {
+            new Notice('❌ Tree view not properly loaded');
+            return;
+        }
+
+        let addedCount = 0;
+        let skippedCount = 0;
+        let firstItem = true;
+
+        for (const workItemData of workItemsData) {
+            const node = treeView.allNodes.get(workItemData.id);
+            if (!node) {
+                console.warn(`Work item ${workItemData.id} not found in tree`);
+                continue;
+            }
+
+            // Check if this work item is already in the list
+            const existingIndex = this.availableFiles.findIndex(file => file.id === node.id);
+            if (existingIndex !== -1) {
+                skippedCount++;
+                continue;
+            }
+
+            try {
+                if (this.availableFiles.length === 0 && firstItem) {
+                    // First item - initialize the view
+                    await this.loadWorkItemData(node);
+                    firstItem = false;
+                } else {
+                    // Subsequent items - add to existing list
+                    await this.addWorkItemToList(node);
+                }
+                addedCount++;
+            } catch (error) {
+                console.error(`Error adding work item ${node.id} to Wiki Maker:`, error);
+            }
+        }
+
+        // Show summary notice
+        let message = '';
+        if (addedCount > 0) {
+            message += `📝 Added ${addedCount} work item${addedCount !== 1 ? 's' : ''} to Wiki Maker`;
+        }
+        if (skippedCount > 0) {
+            if (message) message += ', ';
+            message += `${skippedCount} already in list`;
+        }
+        if (!message) {
+            message = '❌ No new work items added';
+        }
+
+        new Notice(message);
     }
 
     private addCustomStyles() {
