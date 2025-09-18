@@ -42,7 +42,7 @@ export class WikiMakerView extends ItemView {
     async onOpen() {
         const container = this.containerEl.children[1];
         container.empty();
-        container.createEl('h2', { text: 'Wiki Maker' });
+        container.createEl('h2', { text: 'Description Collector' });
 
         // Set up drop zone only once on the main container
         if (!this.dropZoneInitialized) {
@@ -309,7 +309,7 @@ export class WikiMakerView extends ItemView {
         this.refreshFileSelection();
         this.updatePreview();
 
-        new Notice(`Removed [${removedFile.id}] ${removedFile.title} from wiki list`);
+        new Notice(`Removed [${removedFile.id}] ${removedFile.title} from list`);
     }
 
     private setupFileDragAndDrop(fileItem: HTMLElement, index: number) {
@@ -418,7 +418,7 @@ export class WikiMakerView extends ItemView {
         };
 
         const createBtn = buttonContainer.createEl('button', {
-            text: '📝 Create Wiki Note',
+            text: '📝 Create File',
             cls: 'mod-cta'
         });
         createBtn.onclick = async () => {
@@ -462,19 +462,11 @@ export class WikiMakerView extends ItemView {
         if (selectedFiles.length === 0) {
             markdown = '# No work items selected\n\nPlease select at least one work item to include in the wiki note.';
         } else {
-            // Add title if there's only one item, otherwise use a generic title
-            if (selectedFiles.length === 1) {
-                markdown += `# ${selectedFiles[0].title}\n\n`;
-            } else {
-                markdown += `# Wiki Note\n\n`;
-            }
 
             // Add each selected work item as a section
             for (const file of selectedFiles) {
-                if (selectedFiles.length > 1) {
-                    markdown += `## [${file.id}] ${file.title}\n\n`;
-                }
                 
+                markdown += `# ${file.title}\n\n`;
                 if (file.content) {
                     markdown += `${file.content}\n\n`;
                 } else {
