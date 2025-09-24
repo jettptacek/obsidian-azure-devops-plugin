@@ -10,19 +10,21 @@ export class MenuManager {
         this.workItemManager = workItemManager;
     }
 
-    private async checkWorkItemFile(file: TFile): Promise<number | null> {
+    private checkWorkItemFile(file: TFile): number | null {
         try {
-            const content = await this.app.vault.read(file);
-            const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
-            if (!frontmatterMatch) {
+            const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+            if (!frontmatter) {
                 return null;
             }
 
-            const frontmatter = frontmatterMatch[1];
-            const idMatch = frontmatter.match(/id:\s*(\d+)/);
-            
-            return idMatch ? parseInt(idMatch[1]) : null;
+            if('id' in frontmatter)
+            {
+               return frontmatter.id; 
+            }
+            return null;
+
         } catch (error) {
+            console.error('CheckworkItem Error',error);
             return null;
         }
     }
@@ -35,7 +37,7 @@ export class MenuManager {
                     .setTitle('Focus in tree')
                     .setIcon('focus')
                     .onClick(async () => {
-                        const workItemId = await this.checkWorkItemFile(file);
+                        const workItemId = this.checkWorkItemFile(file);
                         if (!workItemId) {
                             new Notice('This note doesn\'t have a work item ID. Only work item notes can be focused in tree.');
                             return;
@@ -52,7 +54,7 @@ export class MenuManager {
                     .setTitle('Push to Azure DevOps')
                     .setIcon('upload')
                     .onClick(async () => {
-                        const workItemId = await this.checkWorkItemFile(file);
+                        const workItemId = this.checkWorkItemFile(file);
                         if (!workItemId) {
                             new Notice('This note doesn\'t have a work item ID. Only pulled work items can be pushed.');
                             return;
@@ -67,7 +69,7 @@ export class MenuManager {
                     .setTitle('Pull from Azure DevOps')
                     .setIcon('download')
                     .onClick(async () => {
-                        const workItemId = await this.checkWorkItemFile(file);
+                        const workItemId = this.checkWorkItemFile(file);
                         if (!workItemId) {
                             new Notice('This note doesn\'t have a work item ID. Only work item notes can be pulled.');
                             return;
@@ -82,7 +84,7 @@ export class MenuManager {
                     .setTitle('View in Azure DevOps')
                     .setIcon('external-link')
                     .onClick(async () => {
-                        const workItemId = await this.checkWorkItemFile(file);
+                        const workItemId = this.checkWorkItemFile(file);
                         if (!workItemId) {
                             new Notice('This note doesn\'t have a work item ID. Only work item notes can be opened in Azure DevOps.');
                             return;

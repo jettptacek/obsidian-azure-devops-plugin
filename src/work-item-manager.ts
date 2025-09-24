@@ -1,4 +1,4 @@
-import { App, Notice, TFile } from 'obsidian';
+import { App, FrontMatterCache, Notice, TFile } from 'obsidian';
 import { AzureDevOpsAPI } from './api';
 import { AzureDevOpsSettings } from './settings';
 import { marked } from 'marked';
@@ -330,24 +330,21 @@ export class WorkItemManager {
         
         try {
             const content = await this.app.vault.read(file);
-            const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+            const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
             
-            if (!frontmatterMatch) {
+            if (!frontmatter) {
                 loadingNotice.hide();
                 new Notice('This note doesn\'t have frontmatter. Only work item notes can be pushed.');
                 return false;
             }
 
-            const frontmatter = frontmatterMatch[1];
-            const idMatch = frontmatter.match(/id:\s*(\d+)/);
-            
-            if (!idMatch) {
+            if (!('id' in frontmatter)) {
                 loadingNotice.hide();
                 new Notice('This note doesn\'t have a work item ID. Only pulled work items can be pushed.');
                 return false;
             }
 
-            const workItemId = parseInt(idMatch[1]);
+            const workItemId = frontmatter.id;
             loadingNotice.setMessage(`📤 Pushing work item ${workItemId}...`);
 
             const updates = this.extractUpdatesFromNote(content, frontmatter);
@@ -376,11 +373,11 @@ export class WorkItemManager {
                 
                 return true;
             } else {
+                new Notice(`❌ Work item ${workItemId} pushed failed`);
                 loadingNotice.hide();
                 return false;
             }
             
-            return success;
         } catch (error) {
             loadingNotice.hide();
             new Notice(`❌ Error pushing work item: ${error.message}`);
@@ -392,25 +389,21 @@ export class WorkItemManager {
         const loadingNotice = new Notice('🔄 Pulling from Azure DevOps...', 0);
         
         try {
-            const content = await this.app.vault.read(file);
-            const frontmatterMatch = content.match(/^---\n([\s\S]*?)\n---/);
+            const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
             
-            if (!frontmatterMatch) {
+            if (!frontmatter) {
                 loadingNotice.hide();
                 new Notice('This note doesn\'t have frontmatter. Only work item notes can be pulled.');
                 return false;
             }
 
-            const frontmatter = frontmatterMatch[1];
-            const idMatch = frontmatter.match(/id:\s*(\d+)/);
-            
-            if (!idMatch) {
+            if (!frontmatter.id) {
                 loadingNotice.hide();
                 new Notice('This note doesn\'t have a work item ID. Only work item notes can be pulled.');
                 return false;
             }
 
-            const workItemId = parseInt(idMatch[1]);
+            const workItemId = frontmatter.id;
             loadingNotice.setMessage(`📥 Pulling work item ${workItemId}...`);
 
             const workItem = await this.api.getSpecificWorkItem(workItemId);
@@ -783,31 +776,37 @@ ${relationshipSections}
             .trim();
     }
 
-    private extractUpdatesFromNote(content: string, frontmatter: string): WorkItemUpdate {
+    private extractUpdatesFromNote(content: string, frontmatter: FrontMatterCache): WorkItemUpdate {
         const updates: WorkItemUpdate = {};
-        const frontmatterData = this.parseFrontmatter(frontmatter);
-
+        
         // Extract title from markdown header
         const titleMatch = content.match(/^---\n[\s\S]*?\n---\n\n# (.+)$/m);
         if (titleMatch) {
+            console.log("Title Matched");
             const newTitle = titleMatch[1].trim();
-            const frontmatterTitle = frontmatterData.title?.replace(/^["']|["']$/g, '');
+            const frontmatterTitle = frontmatter.title?.replace(/^["']|["']$/g, '');
             if (newTitle !== frontmatterTitle) {
                 updates.title = newTitle;
             }
         }
 
         // Extract updates from frontmatter
-        if (frontmatterData.state) updates.state = frontmatterData.state;
-        if (frontmatterData.assignedTo && frontmatterData.assignedTo !== 'Unassigned') {
-            updates.assignedTo = frontmatterData.assignedTo;
+        if (frontmatter.state) {
+            console.log(frontmatter.state);
+            updates.state = frontmatter.state;
+        } 
+        if (frontmatter.assignedTo && frontmatter.assignedTo !== 'Unassigned') {
+            console.log(frontmatter.assignedTo);
+            updates.assignedTo = frontmatter.assignedTo;
         }
-        if (frontmatterData.priority && frontmatterData.priority !== 'null') {
-            const priorityNum = parseInt(frontmatterData.priority);
+        if (frontmatter.priority && frontmatter.priority !== 'null') {
+            console.log(frontmatter.priority);
+            const priorityNum = parseInt(frontmatter.priority);
             if (!isNaN(priorityNum)) updates.priority = priorityNum;
         }
-        if (frontmatterData.tags !== undefined) {
-            updates.tags = frontmatterData.tags === 'None' ? '' : frontmatterData.tags;
+        if (frontmatter.tags && frontmatter.tags !== 'null') {
+            console.log(frontmatter.tags);
+            updates.tags = frontmatter.tags === 'None' ? '' : frontmatter.tags;
         }
 
         // Extract description from Description section (improved to handle content with --- separators)
@@ -829,61 +828,6 @@ ${relationshipSections}
         }
 
         return updates;
-    }
-
-    private parseFrontmatter(frontmatter: string): { [key: string]: string } {
-        const data: { [key: string]: string } = {};
-        const lines = frontmatter.split('\n');
-        
-        let currentKey = '';
-        let currentValue = '';
-        let inLiteralBlock = false;
-        
-        for (const line of lines) {
-            if (line.match(/^([^:]+):\s*\|$/)) {
-                const match = line.match(/^([^:]+):\s*\|$/);
-                if (match) {
-                    currentKey = match[1].trim();
-                    currentValue = '';
-                    inLiteralBlock = true;
-                    continue;
-                }
-            }
-            
-            if (inLiteralBlock) {
-                if (line.startsWith('  ')) {
-                    currentValue += (currentValue ? '\n' : '') + line.substring(2);
-                    continue;
-                } else {
-                    data[currentKey] = currentValue;
-                    inLiteralBlock = false;
-                    currentKey = '';
-                    currentValue = '';
-                }
-            }
-            
-            const colonIndex = line.indexOf(':');
-            if (colonIndex > 0) {
-                const key = line.substring(0, colonIndex).trim();
-                let value = line.substring(colonIndex + 1).trim();
-                
-                if (value === '|') {
-                    currentKey = key;
-                    currentValue = '';
-                    inLiteralBlock = true;
-                    continue;
-                }
-                
-                value = value.replace(/^["']|["']$/g, '');
-                data[key] = value;
-            }
-        }
-        
-        if (inLiteralBlock && currentKey) {
-            data[currentKey] = currentValue;
-        }
-        
-        return data;
     }
 
     private async processDescriptionUpdates(updates: WorkItemUpdate): Promise<WorkItemUpdate> {
