@@ -756,6 +756,63 @@ ${relationshipSections}
         return markdown;
     }
 
+    private parseCustomFieldsFromMarkdown(customFieldsText: string): { [key: string]: any } {
+        const customFields: { [key: string]: any } = {};
+        
+        if (!customFieldsText || customFieldsText.trim() === '') {
+            return customFields;
+        }
+
+        // Split by lines and process each field
+        const lines = customFieldsText.split('\n');
+        
+        for (const line of lines) {
+            const trimmedLine = line.trim();
+            
+            // Skip empty lines
+            if (!trimmedLine) continue;
+            
+            // Match the pattern: **Field Name:** Field Value
+            const fieldMatch = trimmedLine.match(/^\*\*([^*]+):\*\*\s*(.*)$/);
+            if (fieldMatch) {
+                const displayName = fieldMatch[1].trim();
+                const fieldValue = fieldMatch[2].trim();
+                
+                // Convert display name back to original field name format
+                // Display names are formatted as "Field Name" but field names might be "Field.Name" or "Field_Name"
+                const originalFieldName = this.convertDisplayNameToFieldName(displayName);
+                
+                // Handle empty/cleared fields
+                if (fieldValue === '' || fieldValue.toLowerCase() === 'none' || fieldValue === '-') {
+                    customFields[originalFieldName] = null;
+                } else {
+                    customFields[originalFieldName] = fieldValue;
+                }
+            }
+        }
+        
+        return customFields;
+    }
+
+    private convertDisplayNameToFieldName(displayName: string): string {
+        // This is a best-effort conversion from display name back to field name
+        // Since we don't have perfect reverse mapping, we'll make educated guesses
+        
+        // First, try common patterns:
+        // "Field Name" could be "Field.Name", "Field_Name", or "FieldName"
+        
+        // Check if it looks like it should have dots (common in custom fields)
+        if (displayName.includes(' ') && displayName.split(' ').length === 2) {
+            // Try dot notation first (most common for custom fields)
+            const dotNotation = displayName.replace(/\s+/g, '.');
+            return dotNotation;
+        }
+        
+        // Otherwise, try underscore notation
+        const underscoreNotation = displayName.replace(/\s+/g, '_');
+        return underscoreNotation;
+    }
+
     private formatRelationType(relationType: string): string {
         const typeMap: { [key: string]: string } = {
             'System.LinkTypes.Related': 'Related',
@@ -824,6 +881,16 @@ ${relationshipSections}
                 updates.description = markdownDescription;
                 updates.descriptionFormat = 'HTML';
                 updates.needsHtmlConversion = true;
+            }
+        }
+
+        // Extract custom fields from ## Custom Fields section
+        const customFieldsMatch = content.match(/## Custom Fields\n\n([\s\S]*?)(?=\n## (?:Links)|(?:\n---\n\*Last)|$)/);
+        if (customFieldsMatch) {
+            const customFieldsText = customFieldsMatch[1].trim();
+            const parsedCustomFields = this.parseCustomFieldsFromMarkdown(customFieldsText);
+            if (Object.keys(parsedCustomFields).length > 0) {
+                updates.customFields = parsedCustomFields;
             }
         }
 
