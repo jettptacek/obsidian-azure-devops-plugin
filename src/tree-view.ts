@@ -537,10 +537,10 @@ export class AzureDevOpsTreeView extends ItemView {
 
     updateToggleButton(button: HTMLElement) {
         if (this.areAllExpandableNodesExpanded()) {
-            button.textContent = '▶ Collapse All';
+            button.textContent = '▶ Collapse all';
             button.title = 'Collapse all nodes';
         } else {
-            button.textContent = '▼ Expand All';
+            button.textContent = '▼ Expand all';
             button.title = 'Expand all nodes';
         }
     }
@@ -583,7 +583,7 @@ export class AzureDevOpsTreeView extends ItemView {
                 indicator.className = 'azure-tree-change-indicator';
             }
         } else {
-            button.textContent = 'Push Changes';
+            button.textContent = 'Push changes';
             button.title = 'No pending changes';
             button.className = 'azure-tree-push-button';
             
@@ -626,7 +626,7 @@ export class AzureDevOpsTreeView extends ItemView {
         refreshBtn.addEventListener('click', () => this.refreshTreeView());
 
         const pushChangesBtn = buttonContainer.createEl('button', { cls: 'azure-tree-push-button push-changes-btn' });
-        pushChangesBtn.textContent = 'Push Changes';
+        pushChangesBtn.textContent = 'Push changes';
         this.updatePushButton(pushChangesBtn);
         pushChangesBtn.addEventListener('click', () => this.pushAllChanges());
         
@@ -1621,7 +1621,7 @@ export class AzureDevOpsTreeView extends ItemView {
         const menu = new Menu();
 
         menu.addItem((item) => {
-            item.setTitle('Open Work Item')
+            item.setTitle('Open work item')
                 .setIcon('external-link')
                 .onClick(() => this.openWorkItemNote(node));
         });
@@ -1629,7 +1629,7 @@ export class AzureDevOpsTreeView extends ItemView {
         menu.addSeparator();
 
         menu.addItem((item) => {
-            item.setTitle('Make Root Item')
+            item.setTitle('Make root item')
                 .setIcon('arrow-up')
                 .onClick(async () => await this.makeRootItem(node));
         });

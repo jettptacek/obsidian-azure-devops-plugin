@@ -1,4 +1,4 @@
-import { App, Notice, TFile, Modal, requestUrl } from 'obsidian';
+import { App, Notice, TFile, Modal, requestUrl, MetadataCache } from 'obsidian';
 import { AzureDevOpsAPI } from './api';
 import { AzureDevOpsSettings } from './settings';
 
@@ -562,7 +562,7 @@ class LinkValidationModal extends Modal {
 
         // Title
         contentEl.createEl('h2', { 
-            text: 'Azure DevOps Link Validation Results',
+            text: 'Azure DevOps link validation results',
             cls: 'azure-devops-modal-title'
         });
 
@@ -577,12 +577,12 @@ class LinkValidationModal extends Modal {
         const selectControls = contentEl.createDiv('azure-devops-select-controls');
 
         const selectAllBtn = selectControls.createEl('button', {
-            text: 'Select All',
+            text: 'Select all',
             cls: 'azure-devops-control-btn mod-secondary'
         });
 
         const deselectAllBtn = selectControls.createEl('button', {
-            text: 'Deselect All', 
+            text: 'Deselect all', 
             cls: 'azure-devops-control-btn mod-secondary'
         });
 

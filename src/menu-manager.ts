@@ -32,7 +32,7 @@ export class MenuManager {
 
             menu.addItem((item: MenuItem) => {
                 item
-                    .setTitle('Focus in Tree')
+                    .setTitle('Focus in tree')
                     .setIcon('focus')
                     .onClick(async () => {
                         const workItemId = await this.checkWorkItemFile(file);

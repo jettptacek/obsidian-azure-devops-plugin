@@ -33,7 +33,7 @@ export class WorkItemModal extends Modal {
     async onOpen() {
         const { contentEl } = this;
         contentEl.empty();
-        contentEl.createEl('h2', { text: 'Create Azure DevOps Work Item' });
+        contentEl.createEl('h2', { text: 'Create Azure DevOps work item' });
 
         // Show loading message while fetching work item types
         const loadingEl = contentEl.createEl('p', { 
@@ -203,7 +203,7 @@ export class WorkItemModal extends Modal {
         });
 
         const createBtn = buttonContainer.createEl('button', {
-            text: 'Create Work Item',
+            text: 'Create work item',
             cls: 'mod-cta'
         });
         createBtn.addEventListener('click', async () => {

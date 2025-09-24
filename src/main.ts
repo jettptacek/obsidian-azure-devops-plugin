@@ -31,7 +31,7 @@ export default class AzureDevOpsPlugin extends Plugin {
         );
 
         // Add ribbon icons
-        this.addRibbonIcon('create-new', 'Create Azure DevOps Work Item', () => {
+        this.addRibbonIcon('create-new', 'Create Azure DevOps work item', () => {
             if (!this.settings.organization || !this.settings.project || !this.settings.personalAccessToken) {
                 new Notice('❌ Please configure Azure DevOps settings first');
                 return;
@@ -39,11 +39,11 @@ export default class AzureDevOpsPlugin extends Plugin {
             new WorkItemModal(this.app, this).open();
         });
 
-        this.addRibbonIcon('git-branch', 'Azure DevOps Tree View', () => {
+        this.addRibbonIcon('git-branch', 'Azure DevOps tree view', () => {
             this.activateTreeView();
         });
 
-        this.addRibbonIcon('link', 'Validate Azure DevOps Links', () => {
+        this.addRibbonIcon('link', 'Validate Azure DevOps links', () => {
             if (!this.settings.organization || !this.settings.project || !this.settings.personalAccessToken) {
                 new Notice('❌ Please configure Azure DevOps settings first');
                 return;
@@ -54,7 +54,7 @@ export default class AzureDevOpsPlugin extends Plugin {
         // Add commands
         this.addCommand({
             id: 'create-azure-devops-work-item',
-            name: 'Create Azure DevOps Work Item',
+            name: 'Create Azure DevOps work item',
             callback: () => {
                 if (!this.settings.organization || !this.settings.project || !this.settings.personalAccessToken) {
                     new Notice('❌ Please configure Azure DevOps settings first');
@@ -66,25 +66,25 @@ export default class AzureDevOpsPlugin extends Plugin {
 
         this.addCommand({
             id: 'open-azure-devops-tree',
-            name: 'Open Azure DevOps Tree View',
+            name: 'Open Azure DevOps tree view',
             callback: () => this.activateTreeView()
         });
 
         this.addCommand({
             id: 'pull-work-items',
-            name: 'Pull Work Items from Azure DevOps',
+            name: 'Pull work items from Azure DevOps',
             callback: () => this.workItemManager.pullWorkItems()
         });
 
         this.addCommand({
             id: 'push-work-item',
-            name: 'Push Work Item to Azure DevOps',
+            name: 'Push work item to Azure DevOps',
             callback: () => this.workItemManager.pushCurrentWorkItem()
         });
 
         this.addCommand({
             id: 'validate-azure-devops-links',
-            name: 'Validate Azure DevOps Links in Descriptions',
+            name: 'Validate Azure DevOps links in descriptions',
             callback: () => {
                 if (!this.settings.organization || !this.settings.project || !this.settings.personalAccessToken) {
                     new Notice('❌ Please configure Azure DevOps settings first');
@@ -97,7 +97,7 @@ export default class AzureDevOpsPlugin extends Plugin {
 
         this.addCommand({
             id: 'check-pending-changes',
-            name: 'Check Pending Azure DevOps Changes',
+            name: 'Check pending Azure DevOps changes',
             callback: () => {
                 const pendingChanges = this.getPendingChangesCount();
                 if (pendingChanges > 0) {

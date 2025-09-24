@@ -12,8 +12,6 @@ export class AzureDevOpsSettingTab extends PluginSettingTab {
         const { containerEl } = this;
         containerEl.empty();
 
-        containerEl.createEl('h2', { text: 'Azure DevOps Settings' });
-
         new Setting(containerEl)
             .setName('Organization')
             .setDesc('Azure DevOps organization name (just the name, not the full URL)')
@@ -37,7 +35,7 @@ export class AzureDevOpsSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('Personal Access Token')
+            .setName('Personal access token')
             .setDesc('Azure DevOps Personal Access Token with work item permissions')
             .addText(text => text
                 .setPlaceholder('your-pat-token')
@@ -48,8 +46,8 @@ export class AzureDevOpsSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('Use Markdown in Azure DevOps')
-            .setDesc('Enable native Markdown support in Azure DevOps (recommended for new work items). Note: Once enabled for a work item, it cannot be reverted to HTML.')
+            .setName('Markdown inuse in Azure DevOps')
+            .setDesc('Push and Pull with no html conversion')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.useMarkdownInAzureDevOps)
                 .onChange(async (value) => {
