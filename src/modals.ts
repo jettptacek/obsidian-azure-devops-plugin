@@ -209,8 +209,6 @@ export class WorkItemModal extends Modal {
         createBtn.addEventListener('click', async () => {
             await this.handleCreateWorkItem();
         });
-
-        this.addCustomStyles();
     }
 
     private updateTypeDescription(typeName: string) {
@@ -280,45 +278,6 @@ export class WorkItemModal extends Modal {
                 createBtn.disabled = false;
                 createBtn.textContent = 'Create Work Item';
             }
-        }
-    }
-
-    private addCustomStyles() {
-
-        if (!document.querySelector('#work-item-modal-styles')) {
-            const style = document.createElement('style');
-            style.id = 'work-item-modal-styles';
-            style.textContent = `
-                .loading-message {
-                    text-align: center;
-                    color: var(--text-muted);
-                    font-style: italic;
-                    margin: 20px 0;
-                }
-                
-                .error-message {
-                    padding: 8px 12px;
-                    background-color: var(--background-modifier-error);
-                    border-radius: 4px;
-                    border-left: 4px solid var(--text-error);
-                }
-                
-                .type-description {
-                    background-color: var(--background-secondary);
-                    padding: 6px 8px;
-                    border-radius: 4px;
-                    border-left: 3px solid var(--interactive-accent);
-                }
-                
-                .modal-content {
-                    max-width: 500px;
-                }
-                
-                .setting-item-description {
-                    margin-bottom: 8px;
-                }
-            `;
-            document.head.appendChild(style);
         }
     }
 

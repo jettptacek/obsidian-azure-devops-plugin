@@ -768,6 +768,36 @@
     font-style: italic;
 }
 
+/* Work Item Modal Styles */
+.loading-message {
+    text-align: center;
+    color: var(--text-muted);
+    font-style: italic;
+    margin: 20px 0;
+}
+
+.error-message {
+    padding: 8px 12px;
+    background-color: var(--background-modifier-error);
+    border-radius: 4px;
+    border-left: 4px solid var(--text-error);
+}
+
+.type-description {
+    background-color: var(--background-secondary);
+    padding: 6px 8px;
+    border-radius: 4px;
+    border-left: 3px solid var(--interactive-accent);
+}
+
+.modal-content {
+    max-width: 500px;
+}
+
+.setting-item-description {
+    margin-bottom: 8px;
+}
+
 /* ===========================================
    Tree View Dynamic Styles
    =========================================== */
