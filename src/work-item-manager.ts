@@ -315,7 +315,7 @@ export class WorkItemManager {
                 }
                 
                 const remainingChanges = (treeView.changedNotes?.size || 0) + (treeView.changedRelationships?.size || 0);
-                console.log(`✅ Established baselines for ${workItems.length} pulled work items. ${remainingChanges} items still have pending changes.`);
+                //console.log(`✅ Established baselines for ${workItems.length} pulled work items. ${remainingChanges} items still have pending changes.`);
             }
             
         } catch (error) {
@@ -839,7 +839,7 @@ ${relationshipSections}
         // Extract title from markdown header
         const titleMatch = content.match(/^---\n[\s\S]*?\n---\n\n# (.+)$/m);
         if (titleMatch) {
-            console.log("Title Matched");
+            //console.log("Title Matched");
             const newTitle = titleMatch[1].trim();
             const frontmatterTitle = frontmatter.title?.replace(/^["']|["']$/g, '');
             if (newTitle !== frontmatterTitle) {
@@ -849,20 +849,20 @@ ${relationshipSections}
 
         // Extract updates from frontmatter
         if (frontmatter.state) {
-            console.log(frontmatter.state);
+            //console.log(frontmatter.state);
             updates.state = frontmatter.state;
         } 
         if (frontmatter.assignedTo && frontmatter.assignedTo !== 'Unassigned') {
-            console.log(frontmatter.assignedTo);
+            //console.log(frontmatter.assignedTo);
             updates.assignedTo = frontmatter.assignedTo;
         }
         if (frontmatter.priority && frontmatter.priority !== 'null') {
-            console.log(frontmatter.priority);
+            //console.log(frontmatter.priority);
             const priorityNum = parseInt(frontmatter.priority);
             if (!isNaN(priorityNum)) updates.priority = priorityNum;
         }
         if (frontmatter.tags && frontmatter.tags !== 'null') {
-            console.log(frontmatter.tags);
+            //console.log(frontmatter.tags);
             updates.tags = frontmatter.tags === 'None' ? '' : frontmatter.tags;
         }
 

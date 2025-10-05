@@ -205,7 +205,7 @@ export default class AzureDevOpsPlugin extends Plugin {
                         this.refreshTreeView();
                     }
                 } else {
-                    console.log('No tree view open, skipping tree update');
+                    //console.log('No tree view open, skipping tree update');
                 }
                 
                 if (result.id && this.workItemManager) {
@@ -245,7 +245,7 @@ export default class AzureDevOpsPlugin extends Plugin {
             }
 
             await this.app.vault.create(fullPath, noteContent);
-            console.log(`Created note for new work item: ${filename}`);
+            //console.log(`Created note for new work item: ${filename}`);
         } catch (error) {
             console.error('Error creating note for work item:', error);
         }
@@ -294,14 +294,14 @@ export default class AzureDevOpsPlugin extends Plugin {
                 const changedRelationships = azureTreeView.changedRelationships?.size || 0;
                 const total = changedNotes + changedRelationships;
                 
-                console.log('Azure DevOps: getPendingChangesCount:', {
-                    changedNotes,
-                    changedRelationships,
-                    total,
-                    treeViewReady: !!treeView,
-                    changedNotesData: azureTreeView.changedNotes ? Array.from(azureTreeView.changedNotes) : null,
-                    changedRelData: azureTreeView.changedRelationships ? Object.fromEntries(azureTreeView.changedRelationships) : null
-                });
+                // console.log('Azure DevOps: getPendingChangesCount:', {
+                //     changedNotes,
+                //     changedRelationships,
+                //     total,
+                //     treeViewReady: !!treeView,
+                //     changedNotesData: azureTreeView.changedNotes ? Array.from(azureTreeView.changedNotes) : null,
+                //     changedRelData: azureTreeView.changedRelationships ? Object.fromEntries(azureTreeView.changedRelationships) : null
+                // });
                 
                 return total;
             }
@@ -312,11 +312,11 @@ export default class AzureDevOpsPlugin extends Plugin {
                 const savedCount = (savedChanges.changedNotes?.length || 0) + 
                                  (Object.keys(savedChanges.changedRelationships || {}).length || 0);
                 
-                console.log('Azure DevOps: Using saved pending changes count:', savedCount);
+                //console.log('Azure DevOps: Using saved pending changes count:', savedCount);
                 return savedCount;
             }
             
-            console.log('Azure DevOps: No tree view or saved changes found');
+            //console.log('Azure DevOps: No tree view or saved changes found');
             return 0;
         } catch (error) {
             console.error('Azure DevOps: Error getting pending changes count:', error);

@@ -102,8 +102,8 @@ export class WorkItemModal extends Modal {
                 this.workItem.workItemType = taskType ? taskType.name : this.workItemTypes[0].name;
             }
 
-            console.log(`Loaded ${this.workItemTypes.length} work item types:`, 
-                       this.workItemTypes.map(t => t.name));
+            // console.log(`Loaded ${this.workItemTypes.length} work item types:`, 
+            //            this.workItemTypes.map(t => t.name));
             
         } catch (error) {
             console.error('Failed to load work item types:', error);
