@@ -1798,7 +1798,7 @@ export class AzureDevOpsTreeView extends ItemView {
             await this.updateNodeVisualState(workItemId);
             this.updatePushButtonIfExists();
             
-            console.log(`Updated change detection for work item ${workItemId}`);
+            //console.log(`Updated change detection for work item ${workItemId}`);
         } catch (error) {
             console.error(`Error updating change detection for work item ${workItemId}:`, error);
         }
@@ -1815,7 +1815,7 @@ export class AzureDevOpsTreeView extends ItemView {
             this.plugin.settings.pendingChanges = pendingChanges;
             await this.plugin.saveSettings();
             
-            console.log('Azure DevOps: Saved pending changes to settings:', pendingChanges);
+            //console.log('Azure DevOps: Saved pending changes to settings:', pendingChanges);
         } catch (error) {
             console.error('Azure DevOps: Error saving pending changes:', error);
         }
@@ -1837,7 +1837,7 @@ export class AzureDevOpsTreeView extends ItemView {
                     });
                 }
                 
-                console.log('Azure DevOps: Loaded pending changes from settings:', savedChanges);
+                //console.log('Azure DevOps: Loaded pending changes from settings:', savedChanges);
                 this.updatePushButtonIfExists();
                 
                 const timeSinceLastSave = Date.now() - savedChanges.lastSaved;
@@ -1868,7 +1868,7 @@ export class AzureDevOpsTreeView extends ItemView {
         };
         
         await this.plugin.saveSettings();
-        console.log('Azure DevOps: Cleared pending changes from settings');
+        //console.log('Azure DevOps: Cleared pending changes from settings');
     }
 
     async onClose() {
