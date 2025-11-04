@@ -1,9 +1,10 @@
-import { PluginSettingTab, Setting } from 'obsidian';
+import { App, PluginSettingTab, Setting } from 'obsidian';
+import type AzureDevOpsPlugin from './main';
 
 export class AzureDevOpsSettingTab extends PluginSettingTab {
-    plugin: any;
+    plugin: AzureDevOpsPlugin;
 
-    constructor(app: any, plugin: any) {
+    constructor(app: App, plugin: AzureDevOpsPlugin) {
         super(app, plugin);
         this.plugin = plugin;
     }

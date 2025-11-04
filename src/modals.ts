@@ -272,7 +272,7 @@ export class WorkItemModal extends Modal {
             }
         } catch (error) {
             console.error('Error creating work item:', error);
-            new Notice(`❌ Error creating work item: ${error.message}`);
+            new Notice(`❌ Error creating work item: ${(error as Error).message}`);
         } finally {
 
             if (createBtn) {

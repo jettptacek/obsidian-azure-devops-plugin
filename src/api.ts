@@ -10,6 +10,12 @@ interface WorkItemRelation {
     };
 }
 
+interface WorkItemOperation {
+    op: string;
+    path: string;
+    value: string;
+}
+
 export interface WorkItemData {
     workItemType?: string;
     type?: string;
@@ -21,12 +27,15 @@ export interface WorkItemData {
     tags?: string;
     areaPath?: string;
     iterationPath?: string;
-    customFields?: Record<string, any>;
+    customFields?: Record<string, unknown>;
 }
 
 interface WorkItemType {
     name: string;
     isDisabled?: boolean;
+    icon?: {
+        url: string;
+    };
 }
 
 interface WorkItemField {
@@ -52,7 +61,7 @@ interface WorkItemUpdates {
     assignedTo?: string;
     priority?: number;
     tags?: string;
-    customFields?: Record<string, any>;
+    customFields?: Record<string, unknown>;
 }
 
 export class AzureDevOpsAPI {
@@ -85,7 +94,7 @@ export class AzureDevOpsAPI {
         const projectEncoded = encodeURIComponent(this.settings.project);
         const url = `https://dev.azure.com/${this.settings.organization}/${projectEncoded}/_apis/wit/workitems/$${workItemTypeEncoded}?api-version=7.0`;
 
-        const requestBody = [
+        const requestBody: WorkItemOperation[] = [
             {
                 op: 'add',
                 path: '/fields/System.Title',
@@ -163,7 +172,7 @@ export class AzureDevOpsAPI {
                     requestBody.push({
                         op: 'add',
                         path: `/fields/${fieldName}`,
-                        value: fieldValue
+                        value: String(fieldValue)
                     });
                 }
             }
@@ -216,7 +225,7 @@ export class AzureDevOpsAPI {
                 const workItemTypes = response.json.value || [];
                 
                 // Filter out types that shouldn't be created manually
-                return workItemTypes.filter((type: any) => {
+                return workItemTypes.filter((type: { name: string; isDisabled?: boolean }) => {
                     // Filter out disabled types
                     if (type.isDisabled) return false;
                     

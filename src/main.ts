@@ -9,11 +9,11 @@ import { MenuManager } from './menu-manager';
 import { AzureDevOpsLinkValidator } from './link-validator';
 
 export default class AzureDevOpsPlugin extends Plugin {
-    settings: AzureDevOpsSettings;
-    api: AzureDevOpsAPI;
-    workItemManager: WorkItemManager;
-    menuManager: MenuManager;
-    linkValidator: AzureDevOpsLinkValidator;
+    settings!: AzureDevOpsSettings;
+    api!: AzureDevOpsAPI;
+    workItemManager!: WorkItemManager;
+    menuManager!: MenuManager;
+    linkValidator!: AzureDevOpsLinkValidator;
 
     async onload() {
         await this.loadSettings();

@@ -1,6 +1,8 @@
 import { App, FrontMatterCache, Notice, TFile } from 'obsidian';
 import { AzureDevOpsAPI, type WorkItem } from './api';
 import { AzureDevOpsSettings } from './settings';
+import type AzureDevOpsPlugin from './main';
+import type { AzureDevOpsTreeView } from './tree-view';
 import { marked } from 'marked';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -16,7 +18,7 @@ interface WorkItemUpdate {
     assignedTo?: string;
     priority?: number;
     tags?: string;
-    customFields?: { [key: string]: any };
+    customFields?: { [key: string]: unknown };
     needsHtmlConversion?: boolean;
 }
 
@@ -30,13 +32,13 @@ export class WorkItemManager {
     app: App;
     api: AzureDevOpsAPI;
     settings: AzureDevOpsSettings;
-    plugin: unknown;
+    plugin: AzureDevOpsPlugin;
     
     private relatedItemsCache = new Map<number, RelatedWorkItem>();
     
     private turndownService: InstanceType<typeof TurndownService>;
     
-    constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings, plugin: unknown) {
+    constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings, plugin: AzureDevOpsPlugin) {
         this.app = app;
         this.api = api;
         this.settings = settings;
@@ -274,34 +276,35 @@ export class WorkItemManager {
             new Notice(`✅ Pull complete: ${createdCount} created, ${updatedCount} updated`);
 
             // Smart tree view refresh - only reset baselines for items we actually pulled
-            const treeView = ((this.plugin as any).app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
+            const treeView = (this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
             if (treeView) {
+                const azureTreeView = treeView as AzureDevOpsTreeView;
                 
                 // Get IDs of work items that were actually processed
                 const pulledWorkItemIds = new Set(workItems.map(wi => wi.id));
                 
                 // Only clear change tracking for work items we actually pulled
-                if (treeView.changedNotes) {
+                if (azureTreeView.changedNotes) {
                     for (const workItemId of pulledWorkItemIds) {
-                        treeView.changedNotes.delete(workItemId);
+                        azureTreeView.changedNotes.delete(workItemId);
                     }
                 }
                 
                 // Only clear relationship changes for work items we actually pulled
-                if (treeView.changedRelationships) {
+                if (azureTreeView.changedRelationships) {
                     for (const workItemId of pulledWorkItemIds) {
-                        treeView.changedRelationships.delete(workItemId);
+                        azureTreeView.changedRelationships.delete(workItemId);
                     }
                 }
                 
                 // Set baselines for the work items we just processed using the content we created
-                if (treeView.originalNoteContent) {
+                if (azureTreeView.originalNoteContent) {
                     for (let index = 0; index < workItems.length; index++) {
                         const workItem = workItems[index];
                         try {
                             // We just created/updated this content, so store it as the baseline
                             const content = await this.createWorkItemNote(workItem);
-                            treeView.originalNoteContent.set(workItem.id, content);
+                            azureTreeView.originalNoteContent.set(workItem.id, content);
                         } catch (error) {
                             console.error(`Error setting baseline for work item ${workItem.id}:`, error);
                         }
@@ -309,17 +312,17 @@ export class WorkItemManager {
                 }
                 
                 // Update visual state
-                if (typeof treeView.refreshTreeDisplay === 'function') {
-                    await treeView.refreshTreeDisplay();
+                if (typeof azureTreeView.refreshTreeDisplay === 'function') {
+                    await azureTreeView.refreshTreeDisplay();
                 }
-                if (typeof treeView.updatePushButtonIfExists === 'function') {
-                    treeView.updatePushButtonIfExists();
-                }    
+                if (typeof azureTreeView.updatePushButtonIfExists === 'function') {
+                    azureTreeView.updatePushButtonIfExists();
+                }
             }
             
         } catch (error) {
             loadingNotice.hide();
-            new Notice(`❌ Pull failed: ${error.message}`);
+            new Notice(`❌ Pull failed: ${(error as Error).message}`);
             console.error('Pull error:', error);
         }
     }
@@ -363,11 +366,10 @@ export class WorkItemManager {
                 new Notice(`✅ Work item ${workItemId} pushed successfully`);
                 
                 // Notify tree view of successful push so it can clear highlighting for this specific item
-            const treeView = ((this.plugin as any).app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
-                if (treeView && typeof treeView.handleSuccessfulWorkItemPush === 'function') {
-                    await treeView.handleSuccessfulWorkItemPush(workItemId);
-                } else if (typeof treeView.updateSpecificWorkItemChanges === 'function') {
-                    await treeView.updateSpecificWorkItemChanges(workItemId, file);
+            const treeView = (this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
+                if (treeView) {
+                    const azureTreeView = treeView as AzureDevOpsTreeView;
+                    await azureTreeView.refreshTreeDisplay();
                 }
                 
                 return true;
@@ -379,7 +381,7 @@ export class WorkItemManager {
             
         } catch (error) {
             loadingNotice.hide();
-            new Notice(`❌ Error pushing work item: ${error.message}`);
+            new Notice(`❌ Error pushing work item: ${(error as Error).message}`);
             return false;
         }
     }
@@ -419,19 +421,16 @@ export class WorkItemManager {
             loadingNotice.hide();
             new Notice(`✅ Work item ${workItemId} pulled successfully`);
 
-                const treeView = ((this.plugin as any).app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
+            const treeView = (this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
             if (treeView) {
-                if (typeof treeView.updateSingleNodeAfterPull === 'function') {
-                    await treeView.updateSingleNodeAfterPull(workItemId);
-                } else if (typeof treeView.updateSpecificWorkItemChanges === 'function') {
-                    await treeView.updateSpecificWorkItemChanges(workItemId, file);
-                }
+                const azureTreeView = treeView as AzureDevOpsTreeView;
+                await azureTreeView.refreshTreeDisplay();
             }
             
             return true;
         } catch (error) {
             loadingNotice.hide();
-            new Notice(`❌ Error pulling work item: ${error.message}`);
+            new Notice(`❌ Error pulling work item: ${(error as Error).message}`);
             return false;
         }
     }
@@ -447,9 +446,12 @@ export class WorkItemManager {
     }
 
     async navigateToWorkItemInTree(workItemId: number, highlight: boolean = true) {
-        const treeView = ((this.plugin as any).app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
-        if (treeView && typeof treeView.scrollToWorkItem === 'function') {
-            await treeView.scrollToWorkItem(workItemId, highlight);
+        const treeView = (this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
+        if (treeView) {
+            const azureTreeView = treeView as AzureDevOpsTreeView;
+            if (typeof azureTreeView.scrollToWorkItem === 'function') {
+                await azureTreeView.scrollToWorkItem(workItemId, highlight);
+            }
         } else {
             new Notice('Azure DevOps Tree view is not open. Please open it first.');
         }
@@ -478,7 +480,7 @@ export class WorkItemManager {
             const isMarkdownFormat = (workItem.fieldFormats && 
                                      workItem.fieldFormats['System.Description'] && 
                                      workItem.fieldFormats['System.Description'].format === 'Markdown') ||
-                                     (workItem._links && (workItem._links as any).workItemType && 
+                                     (workItem._links && (workItem._links as { workItemType?: unknown }).workItemType && 
                                      this.settings.useMarkdownInAzureDevOps);
             
             if (isMarkdownFormat || this.settings.useMarkdownInAzureDevOps) {
@@ -553,7 +555,7 @@ ${relationshipSections}
         return content;
     }
 
-    private async processWorkItemRelationships(workItem: any): Promise<string> {
+    private async processWorkItemRelationships(workItem: WorkItem): Promise<string> {
         const relations = workItem.relations || [];
         const parentLinks: string[] = [];
         const childLinks: string[] = [];
@@ -679,8 +681,8 @@ ${relationshipSections}
         return fallback;
     }
 
-    private extractCustomFields(fields: any): { [key: string]: any } {
-        const customFields: { [key: string]: any } = {};
+    private extractCustomFields(fields: Record<string, unknown>): { [key: string]: unknown } {
+        const customFields: { [key: string]: unknown } = {};
         const systemPrefixes = [
             'System.', 'Microsoft.VSTS.', 'Microsoft.TeamFoundation.',
             'WEF_', 'Microsoft.Azure.', 'Microsoft.Reporting.'
@@ -715,7 +717,7 @@ ${relationshipSections}
         return validPatterns.some(pattern => pattern.test(fieldName));
     }
 
-    private formatCustomFieldsForYaml(customFields: { [key: string]: any }): string {
+    private formatCustomFieldsForYaml(customFields: { [key: string]: unknown }): string {
         if (Object.keys(customFields).length === 0) return '';
         
         let yaml = '\n# Custom Fields';
@@ -727,7 +729,7 @@ ${relationshipSections}
         return yaml;
     }
 
-    private formatValueForYaml(fieldValue: any): string {
+    private formatValueForYaml(fieldValue: unknown): string {
         if (typeof fieldValue === 'string') {
             if (fieldValue.length > 200 || fieldValue.includes('<') || fieldValue.includes('\n')) {
                 return '|\n  ' + fieldValue.replace(/\n/g, '\n  ');
@@ -735,29 +737,29 @@ ${relationshipSections}
             return `"${fieldValue.replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`;
         }
         
-        if (typeof fieldValue === 'object' && fieldValue?.displayName) {
-            return `"${fieldValue.displayName.replace(/"/g, '\\"')}"`;
+        if (typeof fieldValue === 'object' && fieldValue && (fieldValue as { displayName?: string }).displayName) {
+            return `"${(fieldValue as { displayName: string }).displayName.replace(/"/g, '\\"')}"`;
         }
         
         return `"${String(fieldValue).replace(/"/g, '\\"')}"`;
     }
 
-    private formatCustomFieldsForMarkdown(customFields: { [key: string]: any }): string {
+    private formatCustomFieldsForMarkdown(customFields: { [key: string]: unknown }): string {
         if (Object.keys(customFields).length === 0) return '';
         
         let markdown = '\n## Custom Fields\n\n';
         for (const [fieldName, fieldValue] of Object.entries(customFields)) {
             const displayName = fieldName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-            const displayValue = typeof fieldValue === 'object' && fieldValue?.displayName ? 
-                               fieldValue.displayName : String(fieldValue);
+            const displayValue = typeof fieldValue === 'object' && fieldValue && (fieldValue as { displayName?: string }).displayName ? 
+                               (fieldValue as { displayName: string }).displayName : String(fieldValue);
             
             markdown += `**${displayName}:** ${displayValue}  \n`;
         }
         return markdown;
     }
 
-    private parseCustomFieldsFromMarkdown(customFieldsText: string): { [key: string]: any } {
-        const customFields: { [key: string]: any } = {};
+    private parseCustomFieldsFromMarkdown(customFieldsText: string): { [key: string]: unknown } {
+        const customFields: { [key: string]: unknown } = {};
         
         if (!customFieldsText || customFieldsText.trim() === '') {
             return customFields;
