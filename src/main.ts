@@ -3,7 +3,7 @@ import { AzureDevOpsSettings, DEFAULT_SETTINGS } from './settings';
 import { AzureDevOpsTreeView, VIEW_TYPE_AZURE_DEVOPS_TREE } from './tree-view';
 import { WorkItemModal } from './modals';
 import { AzureDevOpsSettingTab } from './settings-tab';
-import { AzureDevOpsAPI } from './api';
+import { AzureDevOpsAPI, type WorkItemData, type WorkItem } from './api';
 import { WorkItemManager } from './work-item-manager';
 import { MenuManager } from './menu-manager';
 import { AzureDevOpsLinkValidator } from './link-validator';
@@ -177,7 +177,7 @@ export default class AzureDevOpsPlugin extends Plugin {
         }
     }
 
-    async createWorkItem(workItem: any): Promise<any> {
+    async createWorkItem(workItem: WorkItemData): Promise<{ success: boolean; errors?: string[]; error?: string; id?: number; url?: string }> {
         try {
             // Validate the work item data
             const validation = this.api.validateWorkItemData(workItem);
@@ -232,10 +232,10 @@ export default class AzureDevOpsPlugin extends Plugin {
         }
     }
 
-    async createNoteForWorkItem(workItem: any): Promise<void> {
+    async createNoteForWorkItem(workItem: WorkItem): Promise<void> {
         try {
             const noteContent = await this.workItemManager.createWorkItemNote(workItem);
-            const safeTitle = this.workItemManager.sanitizeFileName(workItem.fields['System.Title']);
+            const safeTitle = this.workItemManager.sanitizeFileName(workItem.fields['System.Title'] as string);
             const filename = `WI-${workItem.id} ${safeTitle}.md`;
             const folderPath = 'Azure DevOps Work Items';
             const fullPath = `${folderPath}/${filename}`;
@@ -261,7 +261,7 @@ export default class AzureDevOpsPlugin extends Plugin {
         });
     }
 
-    async getWorkItemsWithRelations(): Promise<any[]> {
+    async getWorkItemsWithRelations(): Promise<WorkItem[]> {
         return this.api.getWorkItemsWithRelations();
     }
 
@@ -289,7 +289,7 @@ export default class AzureDevOpsPlugin extends Plugin {
             const treeView = leaves[0]?.view;
             
             if (treeView) {
-                const azureTreeView = treeView as any;
+                const azureTreeView = treeView as AzureDevOpsTreeView;
                 const changedNotes = azureTreeView.changedNotes?.size || 0;
                 const changedRelationships = azureTreeView.changedRelationships?.size || 0;
                 const total = changedNotes + changedRelationships;

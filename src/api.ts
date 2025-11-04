@@ -10,7 +10,7 @@ interface WorkItemRelation {
     };
 }
 
-interface WorkItemData {
+export interface WorkItemData {
     workItemType?: string;
     type?: string;
     title: string;
@@ -36,7 +36,7 @@ interface WorkItemField {
     usage?: string;
 }
 
-interface WorkItem {
+export interface WorkItem {
     id: number;
     fields: Record<string, unknown>;
     relations?: WorkItemRelation[];

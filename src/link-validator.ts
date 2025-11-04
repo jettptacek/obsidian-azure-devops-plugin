@@ -1,6 +1,7 @@
 import { App, Notice, TFile, Modal, requestUrl } from 'obsidian';
 import { AzureDevOpsAPI } from './api';
 import { AzureDevOpsSettings } from './settings';
+import type AzureDevOpsPlugin from './main';
 
 interface LinkValidationResult {
     workItemId: number;
@@ -27,9 +28,9 @@ export class AzureDevOpsLinkValidator {
     app: App;
     api: AzureDevOpsAPI;
     settings: AzureDevOpsSettings;
-    plugin: any;
+    plugin: AzureDevOpsPlugin;
 
-    constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings, plugin: any) {
+    constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings, plugin: AzureDevOpsPlugin) {
         this.app = app;
         this.api = api;
         this.settings = settings;

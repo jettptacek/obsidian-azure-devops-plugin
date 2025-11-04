@@ -1,5 +1,5 @@
 import { App, FrontMatterCache, Notice, TFile } from 'obsidian';
-import { AzureDevOpsAPI } from './api';
+import { AzureDevOpsAPI, type WorkItem } from './api';
 import { AzureDevOpsSettings } from './settings';
 import { marked } from 'marked';
 
@@ -34,7 +34,7 @@ export class WorkItemManager {
     
     private relatedItemsCache = new Map<number, RelatedWorkItem>();
     
-    private turndownService: any;
+    private turndownService: InstanceType<typeof TurndownService>;
     
     constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings, plugin: unknown) {
         this.app = app;
@@ -455,7 +455,7 @@ export class WorkItemManager {
         }
     }
 
-    async createWorkItemNote(workItem: any): Promise<string> {
+    async createWorkItemNote(workItem: WorkItem): Promise<string> {
         const fields = workItem.fields;
         const id = workItem.id;
         
@@ -463,9 +463,9 @@ export class WorkItemManager {
         const title = fields['System.Title'] || 'Untitled';
         const workItemType = fields['System.WorkItemType'] || 'Unknown';
         const state = fields['System.State'] || 'Unknown';
-        const assignedTo = fields['System.AssignedTo']?.displayName || 'Unassigned';
-        const createdDate = fields['System.CreatedDate'] ? new Date(fields['System.CreatedDate']).toLocaleDateString() : 'Unknown';
-        const changedDate = fields['System.ChangedDate'] ? new Date(fields['System.ChangedDate']).toLocaleDateString() : 'Unknown';
+        const assignedTo = (fields['System.AssignedTo'] as { displayName?: string })?.displayName || 'Unassigned';
+        const createdDate = fields['System.CreatedDate'] ? new Date(fields['System.CreatedDate'] as string).toLocaleDateString() : 'Unknown';
+        const changedDate = fields['System.ChangedDate'] ? new Date(fields['System.ChangedDate'] as string).toLocaleDateString() : 'Unknown';
         const tags = fields['System.Tags'] || '';
         const priority = fields['Microsoft.VSTS.Common.Priority'] || '';
         const areaPath = fields['System.AreaPath'] || '';
@@ -478,15 +478,15 @@ export class WorkItemManager {
             const isMarkdownFormat = (workItem.fieldFormats && 
                                      workItem.fieldFormats['System.Description'] && 
                                      workItem.fieldFormats['System.Description'].format === 'Markdown') ||
-                                    (workItem._links && workItem._links.workItemType && 
+                                     (workItem._links && (workItem._links as any).workItemType && 
                                      this.settings.useMarkdownInAzureDevOps);
             
             if (isMarkdownFormat || this.settings.useMarkdownInAzureDevOps) {
                 // When Azure DevOps is using markdown mode, preserve the content as-is
-                description = fields['System.Description'];
+                description = fields['System.Description'] as string;
             } else {
                 // Convert HTML to markdown for legacy format
-                description = this.htmlToMarkdown(fields['System.Description']);
+                description = this.htmlToMarkdown(fields['System.Description'] as string);
             }
         }
 

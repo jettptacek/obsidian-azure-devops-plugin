@@ -1,5 +1,6 @@
 import { Modal, Notice, Setting, DropdownComponent, App } from 'obsidian';
 import { WorkItem, WorkItemType } from './settings';
+import type { WorkItemData } from './api';
 
 interface AzureDevOpsPlugin {
     app: App;
@@ -9,7 +10,7 @@ interface AzureDevOpsPlugin {
     workItemManager?: {
         navigateToWorkItemInTree(id: number): void;
     };
-    createWorkItem(workItem: WorkItem): Promise<{ id: number; success: boolean }>;
+    createWorkItem(workItem: WorkItemData): Promise<{ success: boolean; errors?: string[]; error?: string; id?: number; url?: string }>;
 }
 
 // Modal for creating work items with dynamic type loading
@@ -263,7 +264,7 @@ export class WorkItemModal extends Modal {
  
                 if (result.id && this.plugin.workItemManager) {
                     setTimeout(() => {
-                        this.plugin.workItemManager?.navigateToWorkItemInTree(result.id);
+                        this.plugin.workItemManager?.navigateToWorkItemInTree(result.id!);
                     }, 1000);
                 }
             } else {
