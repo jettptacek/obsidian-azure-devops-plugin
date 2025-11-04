@@ -19,11 +19,11 @@ export class AzureDevOpsTreeView extends ItemView {
     
     // Track relationship changes
     private originalRelationships: Map<number, number | null> = new Map();
-    private changedRelationships: Map<number, number | null> = new Map();
+    changedRelationships: Map<number, number | null> = new Map();
 
     // Track content changes in addition to relationship changes
     private originalNoteContent: Map<number, string> = new Map();
-    private changedNotes: Set<number> = new Set();
+    changedNotes: Set<number> = new Set();
     private fileWatcher: any = null;
 
     // Auto-scroll and navigation properties
@@ -562,7 +562,7 @@ export class AzureDevOpsTreeView extends ItemView {
             const relChanges = this.changedRelationships.size;
             const contentChanges = this.changedNotes.size;
             
-            let buttonText = `Push ${totalChanges} Change${totalChanges !== 1 ? 's' : ''}`;
+            const buttonText = `Push ${totalChanges} Change${totalChanges !== 1 ? 's' : ''}`;
             let titleText = '';
             
             if (relChanges > 0 && contentChanges > 0) {
@@ -1258,7 +1258,7 @@ export class AzureDevOpsTreeView extends ItemView {
                 } else {
                     throw new Error('Invalid SVG content');
                 }
-            } catch (error) {
+            } catch {
                 this.setFallbackImage(container, iconValue, workItemType);
             }
         } else {
@@ -1921,7 +1921,7 @@ export class AzureDevOpsTreeView extends ItemView {
                                 }
                                 return iconDataUrl;
                             })
-                            .catch((error: any) => {
+                            .catch((error: unknown) => {
                                 console.error(`Error loading icon for ${typeName}:`, error);
                                 return null;
                             });

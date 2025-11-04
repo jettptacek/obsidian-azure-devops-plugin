@@ -48,7 +48,7 @@ export interface WorkItemNode {
 export interface AzureDevOpsWorkItem {
     id: number;
     fields: {
-        [key: string]: any;
+        [key: string]: unknown;
         'System.Title': string;
         'System.WorkItemType': string;
         'System.State': string;
@@ -65,7 +65,7 @@ export interface AzureDevOpsWorkItem {
     fieldFormats?: {
         [key: string]: { format: string };
     };
-    _links?: any;
+    _links?: unknown;
 }
 
 export interface WorkItemType {
@@ -89,7 +89,7 @@ export interface WorkItemUpdate {
     assignedTo?: string;
     priority?: number;
     tags?: string;
-    customFields?: { [key: string]: any };
+    customFields?: { [key: string]: unknown };
     needsHtmlConversion?: boolean;
 }
 

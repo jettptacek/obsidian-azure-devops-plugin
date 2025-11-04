@@ -227,7 +227,7 @@ export default class AzureDevOpsPlugin extends Plugin {
             console.error('Error creating work item:', error);
             return { 
                 success: false, 
-                error: error.message || 'Unknown error occurred'
+                error: (error as Error).message || 'Unknown error occurred'
             };
         }
     }

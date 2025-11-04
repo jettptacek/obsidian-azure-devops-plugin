@@ -3,7 +3,9 @@ import { AzureDevOpsAPI } from './api';
 import { AzureDevOpsSettings } from './settings';
 import { marked } from 'marked';
 
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const TurndownService = require('turndown');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const turndownPluginGfm = require('turndown-plugin-gfm');
 
 interface WorkItemUpdate {
@@ -28,13 +30,13 @@ export class WorkItemManager {
     app: App;
     api: AzureDevOpsAPI;
     settings: AzureDevOpsSettings;
-    plugin: any;
+    plugin: unknown;
     
     private relatedItemsCache = new Map<number, RelatedWorkItem>();
     
     private turndownService: any;
     
-    constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings, plugin: any) {
+    constructor(app: App, api: AzureDevOpsAPI, settings: AzureDevOpsSettings, plugin: unknown) {
         this.app = app;
         this.api = api;
         this.settings = settings;
@@ -75,7 +77,7 @@ export class WorkItemManager {
         // Azure DevOps specific HTML handling
         this.turndownService.addRule('azureDevOpsDiv', {
             filter: 'div',
-            replacement: function (content: string, node: any) {
+            replacement: function (content: string) {
                 return content ? '\n\n' + content + '\n\n' : '';
             }
         });
@@ -83,7 +85,7 @@ export class WorkItemManager {
         // Handle nested lists with proper spacing
         this.turndownService.addRule('nestedLists', {
             filter: ['ul', 'ol'],
-            replacement: function (content: string, node: any) {
+            replacement: function (content: string, node: Element) {
                 const parent = node.parentNode;
                 if (parent && parent.nodeName === 'LI') {
                     return '\n' + content;
@@ -95,7 +97,7 @@ export class WorkItemManager {
         // Handle line breaks in tables and content
         this.turndownService.addRule('lineBreaks', {
             filter: 'br',
-            replacement: function (content: string, node: any) {
+            replacement: function (_content: string, node: Element) {
                 let parent = node.parentNode;
                 while (parent) {
                     if (parent.nodeName === 'TD' || parent.nodeName === 'TH') {
@@ -117,7 +119,7 @@ export class WorkItemManager {
         // Enhanced table handling with alignment preservation
         this.turndownService.addRule('azureTables', {
             filter: 'table',
-            replacement: function (content: string, node: any) {
+            replacement: function (content: string, node: Element) {
                 const rows = node.querySelectorAll('tr');
                 if (rows.length === 0) return content;
                 
@@ -126,13 +128,13 @@ export class WorkItemManager {
                 let numColumns = 0;
                 
                 // Determine table structure
-                rows.forEach((row: any, rowIndex: number) => {
+                rows.forEach((row: Element, rowIndex: number) => {
                     const cells = row.querySelectorAll('th, td');
                     numColumns = Math.max(numColumns, cells.length);
                     
                     if (alignments.length === 0 || rowIndex === 0) {
                         const rowAlignments: string[] = [];
-                        cells.forEach((cell: any) => {
+                        cells.forEach((cell: Element) => {
                             const style = cell.getAttribute('style') || '';
                             const align = cell.getAttribute('align') || '';
                             
@@ -157,7 +159,7 @@ export class WorkItemManager {
                 }
                 
                 // Build markdown table
-                rows.forEach((row: any, rowIndex: number) => {
+                rows.forEach((row: Element, rowIndex: number) => {
                     const cells = row.querySelectorAll('th, td');
                     const cellContents: string[] = [];
                     
@@ -247,7 +249,7 @@ export class WorkItemManager {
                 
                 try {
                     const fields = workItem.fields;
-                    const safeTitle = this.sanitizeFileName(fields['System.Title']);
+                    const safeTitle = this.sanitizeFileName(fields['System.Title'] as string);
                     const filename = `WI-${workItem.id} ${safeTitle}.md`;
                     const fullPath = `${folderPath}/${filename}`;
 
@@ -272,7 +274,7 @@ export class WorkItemManager {
             new Notice(`✅ Pull complete: ${createdCount} created, ${updatedCount} updated`);
 
             // Smart tree view refresh - only reset baselines for items we actually pulled
-            const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+            const treeView = ((this.plugin as any).app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
             if (treeView) {
                 
                 // Get IDs of work items that were actually processed
@@ -361,7 +363,7 @@ export class WorkItemManager {
                 new Notice(`✅ Work item ${workItemId} pushed successfully`);
                 
                 // Notify tree view of successful push so it can clear highlighting for this specific item
-                const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+            const treeView = ((this.plugin as any).app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
                 if (treeView && typeof treeView.handleSuccessfulWorkItemPush === 'function') {
                     await treeView.handleSuccessfulWorkItemPush(workItemId);
                 } else if (typeof treeView.updateSpecificWorkItemChanges === 'function') {
@@ -417,7 +419,7 @@ export class WorkItemManager {
             loadingNotice.hide();
             new Notice(`✅ Work item ${workItemId} pulled successfully`);
 
-            const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+                const treeView = ((this.plugin as any).app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
             if (treeView) {
                 if (typeof treeView.updateSingleNodeAfterPull === 'function') {
                     await treeView.updateSingleNodeAfterPull(workItemId);
@@ -445,7 +447,7 @@ export class WorkItemManager {
     }
 
     async navigateToWorkItemInTree(workItemId: number, highlight: boolean = true) {
-        const treeView = this.plugin.app.workspace.getLeavesOfType('azure-devops-tree-view')[0]?.view;
+        const treeView = ((this.plugin as any).app.workspace.getLeavesOfType('azure-devops-tree-view')[0])?.view;
         if (treeView && typeof treeView.scrollToWorkItem === 'function') {
             await treeView.scrollToWorkItem(workItemId, highlight);
         } else {
@@ -610,10 +612,11 @@ ${relationshipSections}
                         case 'System.LinkTypes.Dependency-Reverse':
                             dependencyLinks.push(`- **Predecessor:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
                             break;
-                        default:
+                        default: {
                             const relType = this.formatRelationType(relation.rel);
                             relatedLinks.push(`- **${relType}:** ${notePath} | [Azure DevOps](${azureUrl})${commentText}`);
                             break;
+                        }
                     }
                 }
             } else {
@@ -655,8 +658,8 @@ ${relationshipSections}
             if (workItem && workItem.fields) {
                 const relatedItem: RelatedWorkItem = {
                     id: relatedId,
-                    title: workItem.fields['System.Title'] || `Work Item ${relatedId}`,
-                    type: workItem.fields['System.WorkItemType'] || 'Unknown'
+                    title: workItem.fields['System.Title'] as string || `Work Item ${relatedId}`,
+                    type: workItem.fields['System.WorkItemType'] as string || 'Unknown'
                 };
                 
                 this.relatedItemsCache.set(relatedId, relatedItem);
@@ -706,7 +709,7 @@ ${relationshipSections}
         const validPatterns = [
             /^[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*$/,
             /^[A-Za-z][A-Za-z0-9_\s]*$/,
-            /^[A-Za-z][A-Za-z0-9_\-\s\.]*[A-Za-z0-9]$/
+            /^[A-Za-z][A-Za-z0-9_\-\s.]*[A-Za-z0-9]$/
         ];
         
         return validPatterns.some(pattern => pattern.test(fieldName));
@@ -717,7 +720,7 @@ ${relationshipSections}
         
         let yaml = '\n# Custom Fields';
         for (const [fieldName, fieldValue] of Object.entries(customFields)) {
-            const yamlKey = fieldName.replace(/[^a-zA-Z0-9_\.]/g, '_').toLowerCase();
+            const yamlKey = fieldName.replace(/[^a-zA-Z0-9_.]/g, '_').toLowerCase();
             const yamlValue = this.formatValueForYaml(fieldValue);
             yaml += `\n${yamlKey}: ${yamlValue}`;
         }
@@ -914,9 +917,9 @@ ${relationshipSections}
                 .replace(/<br\s*\/?>/gi, '<br>')
                 .replace(/<(script|style)[^>]*>[\s\S]*?<\/(script|style)>/gi, '');
             
-            let markdown = this.turndownService.turndown(cleanedHtml);
+            const markdownContent = this.turndownService.turndown(cleanedHtml);
             
-            return markdown
+            return markdownContent
                 .replace(/\n\n\n+/g, '\n\n')
                 .replace(/(\n- [^\n]*)\n([^-\s])/g, '$1\n\n$2')
                 .replace(/\n(#{1,6} [^\n]*)\n([^#\n])/g, '\n$1\n\n$2')
@@ -933,7 +936,7 @@ ${relationshipSections}
         
         try {
             // First, process tables with custom handler to ensure proper alignment
-            let processedMarkdown = this.preProcessTablesForMarked(markdown);
+            const processedMarkdownContent = this.preProcessTablesForMarked(markdown);
             
             // Configure marked for better spacing preservation
             marked.setOptions({
@@ -943,7 +946,7 @@ ${relationshipSections}
             });
             
             // Use marked to convert markdown to HTML
-            let html = await marked(processedMarkdown);
+            let html = await marked(processedMarkdownContent);
             
             // Clean up and improve the HTML for Azure DevOps compatibility
             html = html
@@ -1189,7 +1192,7 @@ ${relationshipSections}
         let codeBlockLang = '';
         
         for (let i = 0; i < lines.length; i++) {
-            let line = lines[i];
+            const line = lines[i];
             
             // Handle code blocks
             if (line.startsWith('```')) {
@@ -1224,8 +1227,8 @@ ${relationshipSections}
             }
             
             // Lists
-            if (line.match(/^\s*[\*\-\+] /)) {
-                const content = line.replace(/^\s*[\*\-\+]\s*/, '');
+            if (line.match(/^\s*[*-] /)) {
+                const content = line.replace(/^\s*[*-]\s*/, '');
                 const processed = this.processInlineMarkdown(content);
                 
                 const prevLine = i > 0 ? lines[i - 1] : '';
@@ -1233,10 +1236,10 @@ ${relationshipSections}
                 
                 let listItem = `<li>${processed}</li>`;
                 
-                if (!prevLine.match(/^\s*[\*\-\+] /)) {
+                if (!prevLine.match(/^\s*[*-] /)) {
                     listItem = '<ul>\n' + listItem;
                 }
-                if (!nextLine.match(/^\s*[\*\-\+] /)) {
+                if (!nextLine.match(/^\s*[*-] /)) {
                     listItem = listItem + '\n</ul>';
                 }
                 

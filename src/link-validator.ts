@@ -80,7 +80,7 @@ export class AzureDevOpsLinkValidator {
 
         } catch (error) {
             loadingNotice.hide();
-            new Notice(`❌ Error validating links: ${error.message}`);
+            new Notice(`❌ Error validating links: ${(error as Error).message}`);
             console.error('Link validation error:', error);
         }
     }
@@ -92,7 +92,7 @@ export class AzureDevOpsLinkValidator {
         for (const file of files) {
             try {
                 const content = await this.app.vault.read(file);
-                const links = this.extractAzureDevOpsLinksFromContent(content, file.path);
+                const links = this.extractAzureDevOpsLinksFromContent(content);
 
                 if (links.length > 0) {
                     azureDevOpsLinks.set(this.getWorkItemIdFromFileName(file.name), links);
@@ -105,7 +105,7 @@ export class AzureDevOpsLinkValidator {
         return azureDevOpsLinks;
     }
 
-    extractAzureDevOpsLinksFromContent(content: string, filePath: string): AzureDevOpsLink[] {
+    extractAzureDevOpsLinksFromContent(content: string): AzureDevOpsLink[] {
         const links: AzureDevOpsLink[] = [];
 
         // Extract only the Description section
@@ -118,7 +118,7 @@ export class AzureDevOpsLinkValidator {
 
         // Pattern to match Azure DevOps work item links
         // [Some Text](https://dev.azure.com/org/project/_workitems/edit/12345)
-        const azureDevOpsLinkPattern = /\[([^\]]+)\]\((https:\/\/dev\.azure\.com\/[^\/]+\/[^\/]+\/_workitems\/edit\/(\d+)[^)]*)\)/g;
+        const azureDevOpsLinkPattern = /\[([^\]]+)\]\((https:\/\/dev\.azure\.com\/[^/]+\/[^/]+\/_workitems\/edit\/(\d+)[^)]*)\)/g;
 
         let match;
         while ((match = azureDevOpsLinkPattern.exec(descriptionContent)) !== null) {
@@ -165,7 +165,6 @@ export class AzureDevOpsLinkValidator {
         const workItemIds = Array.from(referencedWorkItemIds);
 
         const actualTitles = new Map<number, string>();
-        let foundFromNotes = 0;
 
         for (const workItemId of workItemIds) {
             const workItemFile = this.app.vault.getMarkdownFiles()
@@ -248,7 +247,6 @@ export class AzureDevOpsLinkValidator {
         }
 
         // Compare display text with actual titles
-        let processedCount = 0;
         for (const [, links] of azureDevOpsLinks) {
 
             for (const link of links) {
@@ -271,8 +269,6 @@ export class AzureDevOpsLinkValidator {
                     console.warn(`No actual title found for work item ${link.workItemId} (404 or permission issue)`);
                 }
             }
-
-            processedCount++;
         }
 
         return invalidLinks;
@@ -298,8 +294,8 @@ export class AzureDevOpsLinkValidator {
 
                     if (workItems.length > 0) {
                         for (const workItem of workItems) {
-                            const title = workItem.fields['System.Title'] || '';
-                            actualTitles.set(workItem.id, title);
+                        const title = workItem.fields['System.Title'] as string || '';
+                        actualTitles.set(workItem.id, title);
                         }
 
                         // Remove successfully fetched IDs from remaining
@@ -311,7 +307,7 @@ export class AzureDevOpsLinkValidator {
                         // Batch failed, add all IDs back to remaining for smaller batch size
                         newRemainingIds.push(...batch);
                     }
-                } catch (error) {
+                } catch {
                     // Batch failed, add all IDs back to remaining
                     newRemainingIds.push(...batch);
                 }
@@ -331,11 +327,11 @@ export class AzureDevOpsLinkValidator {
                 try {
                     const workItem = await this.fetchIndividualWorkItem(workItemId);
                     if (workItem) {
-                        const title = workItem.fields['System.Title'] || '';
-                        actualTitles.set(workItem.id, title);
+                    const title = workItem.fields['System.Title'] as string || '';
+                    actualTitles.set(workItem.id, title);
                     }
                 } catch (error) {
-                    console.warn(`Could not fetch work item ${workItemId}:`, error.message);
+                    console.warn(`Could not fetch work item ${workItemId}:`, (error as Error).message);
                 }
 
                 // Small delay between individual requests
@@ -344,7 +340,7 @@ export class AzureDevOpsLinkValidator {
         }
     }
 
-    async fetchWorkItemsBatch(workItemIds: number[]): Promise<any[]> {
+    async fetchWorkItemsBatch(workItemIds: number[]): Promise<{ id: number; fields: Record<string, unknown> }[]> {
         if (workItemIds.length === 0) return [];
 
         // Use the same URL format as the working getSpecificWorkItem method
@@ -373,7 +369,7 @@ export class AzureDevOpsLinkValidator {
         }
     }
 
-    async fetchIndividualWorkItem(workItemId: number): Promise<any> {
+    async fetchIndividualWorkItem(workItemId: number): Promise<{ id: number; fields: Record<string, unknown> } | null> {
         const url = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_apis/wit/workitems/${workItemId}?api-version=7.0`;
 
         try {
@@ -391,7 +387,7 @@ export class AzureDevOpsLinkValidator {
             } else {
                 return null;
             }
-        } catch (error) {
+        } catch {
             return null;
         }
     }
@@ -479,7 +475,7 @@ export class AzureDevOpsLinkValidator {
 
         } catch (error) {
             loadingNotice.hide();
-            new Notice(`❌ Error fixing links: ${error.message}`);
+            new Notice(`❌ Error fixing links: ${(error as Error).message}`);
             console.error('Link fixing error:', error);
         }
     }
@@ -594,7 +590,7 @@ class LinkValidationModal extends Modal {
         const resultsContainer = contentEl.createDiv('azure-devops-results-container');
 
         // Display each validation result with checkbox
-        this.results.forEach((result, index) => {
+        this.results.forEach((result) => {
             const resultDiv = resultsContainer.createDiv('azure-devops-result-item');
             if (!this.selectedResults.has(result)) {
                 resultDiv.addClass('azure-devops-result-item--unselected');

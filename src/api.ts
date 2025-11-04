@@ -10,6 +10,51 @@ interface WorkItemRelation {
     };
 }
 
+interface WorkItemData {
+    workItemType?: string;
+    type?: string;
+    title: string;
+    description?: string;
+    state?: string;
+    assignedTo?: string;
+    priority?: number;
+    tags?: string;
+    areaPath?: string;
+    iterationPath?: string;
+    customFields?: Record<string, any>;
+}
+
+interface WorkItemType {
+    name: string;
+    isDisabled?: boolean;
+}
+
+interface WorkItemField {
+    referenceName: string;
+    name: string;
+    type: string;
+    usage?: string;
+}
+
+interface WorkItem {
+    id: number;
+    fields: Record<string, unknown>;
+    relations?: WorkItemRelation[];
+    _links?: unknown;
+    fieldFormats?: Record<string, { format: string }>;
+}
+
+interface WorkItemUpdates {
+    title?: string;
+    description?: string;
+    descriptionFormat?: string;
+    state?: string;
+    assignedTo?: string;
+    priority?: number;
+    tags?: string;
+    customFields?: Record<string, any>;
+}
+
 export class AzureDevOpsAPI {
     settings: AzureDevOpsSettings;
 
@@ -29,14 +74,14 @@ export class AzureDevOpsAPI {
         return true;
     }
 
-    async createWorkItem(workItemData: any): Promise<any> {
+    async createWorkItem(workItemData: WorkItemData): Promise<WorkItem | null> {
         if (!this.validateSettings()) return null;
 
         const workItemType = workItemData.workItemType || workItemData.type;
         const title = workItemData.title;
         const description = workItemData.description || '';
 
-        const workItemTypeEncoded = encodeURIComponent(workItemType);
+        const workItemTypeEncoded = encodeURIComponent(workItemType || '');
         const projectEncoded = encodeURIComponent(this.settings.project);
         const url = `https://dev.azure.com/${this.settings.organization}/${projectEncoded}/_apis/wit/workitems/$${workItemTypeEncoded}?api-version=7.0`;
 
@@ -80,7 +125,7 @@ export class AzureDevOpsAPI {
             requestBody.push({
                 op: 'add',
                 path: '/fields/Microsoft.VSTS.Common.Priority',
-                value: workItemData.priority.toString()
+                value: workItemData.priority?.toString() || ''
             });
         }
 
@@ -147,12 +192,12 @@ export class AzureDevOpsAPI {
             }
         } catch (error) {
             console.error('Request failed:', error);
-            new Notice(`Request failed: ${error.message}`);
+            new Notice(`Request failed: ${(error as Error).message}`);
             return null;
         }
     }
 
-    async getWorkItemTypes(): Promise<any[]> {
+    async getWorkItemTypes(): Promise<WorkItemType[]> {
         if (!this.validateSettings()) return [];
 
         const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/workitemtypes?api-version=7.0`;
@@ -202,7 +247,7 @@ export class AzureDevOpsAPI {
         }
     }
 
-    validateWorkItemData(workItemData: any): { isValid: boolean; errors: string[] } {
+    validateWorkItemData(workItemData: WorkItemData): { isValid: boolean; errors: string[] } {
         const errors: string[] = [];
         
         if (!workItemData.title || workItemData.title.trim() === '') {
@@ -229,7 +274,7 @@ export class AzureDevOpsAPI {
         };
     }
 
-    async getWorkItemTypeDetails(typeName: string): Promise<any> {
+    async getWorkItemTypeDetails(typeName: string): Promise<WorkItemType | null> {
         if (!this.validateSettings()) return null;
 
         const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/workitemtypes/${encodeURIComponent(typeName)}?api-version=7.0`;
@@ -256,7 +301,7 @@ export class AzureDevOpsAPI {
         }
     }
 
-    async getWorkItemsWithRelations(): Promise<any[]> {
+    async getWorkItemsWithRelations(): Promise<WorkItem[]> {
         if (!this.validateSettings()) return [];
 
         const wiql = `SELECT [System.Id], [System.Title], [System.WorkItemType], [System.State] 
@@ -284,12 +329,12 @@ export class AzureDevOpsAPI {
                 return [];
             }
 
-            const queryResult = queryResponse.json;
-            const workItemIds = queryResult.workItems.map((wi: any) => wi.id);
+        const queryResult = queryResponse.json;
+        const workItemIds = queryResult.workItems.map((wi: { id: number }) => wi.id);
 
-            if (workItemIds.length === 0) {
-                return [];
-            }
+        if (workItemIds.length === 0) {
+            return [];
+        }
 
             // Fetch work items with relations in batches
             const batchSize = 100;
@@ -320,12 +365,12 @@ export class AzureDevOpsAPI {
 
         } catch (error) {
             console.error('Error fetching work items:', error);
-            new Notice(`Error fetching work items: ${error.message}`);
+            new Notice(`Error fetching work items: ${(error as Error).message}`);
             return [];
         }
     }
 
-    async getWorkItems(): Promise<any[]> {
+    async getWorkItems(): Promise<WorkItem[]> {
         if (!this.validateSettings()) return [];
 
         const wiql = `SELECT [System.Id], [System.Title], [System.WorkItemType], [System.State] 
@@ -354,7 +399,7 @@ export class AzureDevOpsAPI {
             }
 
             const queryResult = queryResponse.json;
-            const workItemIds = queryResult.workItems.map((wi: any) => wi.id);
+            const workItemIds = queryResult.workItems.map((wi: { id: number }) => wi.id);
 
             if (workItemIds.length === 0) {
                 new Notice('No work items found');
@@ -382,7 +427,7 @@ export class AzureDevOpsAPI {
                     const batchResult = detailsResponse.json;
                     if (batchResult.value && Array.isArray(batchResult.value)) {
                         // Process each work item to add field format information
-                        const processedWorkItems = batchResult.value.map((workItem: any) => {
+                        const processedWorkItems = batchResult.value.map((workItem: WorkItem) => {
                             // Add field format information if available in the response
                             if (workItem.fields && workItem._links) {
                                 // Initialize fieldFormats if not present
@@ -410,13 +455,13 @@ export class AzureDevOpsAPI {
 
         } catch (error) {
             console.error('Error fetching work items:', error);
-            new Notice(`Error fetching work items: ${error.message}`);
+            new Notice(`Error fetching work items: ${(error as Error).message}`);
             return [];
         }
     }
 
     // Get a specific work item by ID
-    async getSpecificWorkItem(workItemId: number): Promise<any> {
+    async getSpecificWorkItem(workItemId: number): Promise<WorkItem | null> {
         if (!this.validateSettings()) return null;
 
         const url = `https://dev.azure.com/${this.settings.organization}/${this.settings.project}/_apis/wit/workitems/${workItemId}?$expand=all&api-version=7.0`;
@@ -455,13 +500,13 @@ export class AzureDevOpsAPI {
                 return null;
             }
         } catch (error) {
-            new Notice(`Error fetching work item: ${error.message}`);
+            new Notice(`Error fetching work item: ${(error as Error).message}`);
             return null;
         }
     }
 
     // Update work item in Azure DevOps
-    async updateWorkItem(workItemId: number, updates: any): Promise<boolean> {
+    async updateWorkItem(workItemId: number, updates: WorkItemUpdates): Promise<boolean> {
         if (!this.validateSettings()) return false;
 
         const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/workitems/${workItemId}?api-version=7.0`;
@@ -516,7 +561,7 @@ export class AzureDevOpsAPI {
             });
         }
 
-        if (updates.hasOwnProperty('tags')) {
+        if (Object.prototype.hasOwnProperty.call(updates, 'tags')) {
             if (updates.tags === '') {
                 requestBody.push({
                     op: 'remove',
@@ -576,13 +621,13 @@ export class AzureDevOpsAPI {
             }
         } catch (error) {
             console.error('Push failed:', error);
-            new Notice(`Push failed: ${error.message}`);
+            new Notice(`Push failed: ${(error as Error).message}`);
             return false;
         }
     }
 
     // Get all field definitions for the project (useful for custom field discovery)
-    async getWorkItemFields(): Promise<any[]> {
+    async getWorkItemFields(): Promise<WorkItemField[]> {
         if (!this.validateSettings()) return [];
 
         const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/fields?api-version=7.0`;
@@ -610,7 +655,7 @@ export class AzureDevOpsAPI {
     }
 
     // Get field definitions for a specific work item type
-    async getWorkItemTypeFields(workItemType: string): Promise<any[]> {
+    async getWorkItemTypeFields(workItemType: string): Promise<WorkItemField[]> {
         if (!this.validateSettings()) return [];
 
         const url = `https://dev.azure.com/${this.settings.organization}/${encodeURIComponent(this.settings.project)}/_apis/wit/workitemtypes/${encodeURIComponent(workItemType)}/fields?api-version=7.0`;
@@ -638,7 +683,7 @@ export class AzureDevOpsAPI {
     }
 
     // Validate custom field before updating
-    async validateCustomField(fieldName: string, fieldValue: any, workItemType?: string): Promise<boolean> {
+    async validateCustomField(fieldName: string, fieldValue: unknown): Promise<boolean> {
         if (!this.validateSettings()) return false;
 
         try {
@@ -656,9 +701,9 @@ export class AzureDevOpsAPI {
             // Basic type validation
             switch (field.type) {
                 case 'Integer':
-                    return !isNaN(parseInt(fieldValue));
+                    return !isNaN(parseInt(String(fieldValue)));
                 case 'Double':
-                    return !isNaN(parseFloat(fieldValue));
+                    return !isNaN(parseFloat(String(fieldValue)));
                 case 'Boolean':
                     return typeof fieldValue === 'boolean' || fieldValue === 'true' || fieldValue === 'false';
                 case 'String':
@@ -666,7 +711,7 @@ export class AzureDevOpsAPI {
                 case 'Html':
                     return typeof fieldValue === 'string';
                 case 'DateTime':
-                    return !isNaN(Date.parse(fieldValue));
+                    return !isNaN(Date.parse(String(fieldValue)));
                 default:
                     return true; // Allow other types
             }
@@ -677,7 +722,7 @@ export class AzureDevOpsAPI {
     }
 
     // Get custom field definitions (non-system fields)
-    async getCustomFields(): Promise<any[]> {
+    async getCustomFields(): Promise<WorkItemField[]> {
         if (!this.validateSettings()) return [];
 
         try {
@@ -711,7 +756,7 @@ export class AzureDevOpsAPI {
             path: '/relations/-',
             value: {
                 rel: 'System.LinkTypes.Hierarchy-Reverse',
-                url: `https://dev.azure.com/${this.settings.organization}/_apis/wit/workItems/${parentId}`,
+                url: `https://dev.azure.com/${this.settings.organization}/_apis/wit/workItems/${String(parentId)}`,
                 attributes: {
                     comment: 'Parent relationship added from Obsidian'
                 }
@@ -738,7 +783,7 @@ export class AzureDevOpsAPI {
                 return false;
             }
         } catch (error) {
-            new Notice(`Error adding parent relationship: ${error.message}`);
+            new Notice(`Error adding parent relationship: ${(error as Error).message}`);
             console.error(`Error adding parent relationship:`, error);
             return false;
         }
@@ -792,7 +837,7 @@ export class AzureDevOpsAPI {
                 return false;
             }
         } catch (error) {
-            console.error(`Error removing parent relationships: ${error.message}`);
+            console.error(`Error removing parent relationships: ${(error as Error).message}`);
             return false;
         }
     }
@@ -847,14 +892,14 @@ export class AzureDevOpsAPI {
                 return false;
             }
         } catch (error) {
-            new Notice(`Error removing parent relationship: ${error.message}`);
+            new Notice(`Error removing parent relationship: ${(error as Error).message}`);
             console.error(`Error removing parent relationship:`, error);
             return false;
         }
     }
 
     // Download and cache work item type icon
-    async downloadWorkItemIcon(iconUrl: string, workItemType: string): Promise<string | null> {
+    async downloadWorkItemIcon(iconUrl: string): Promise<string | null> {
         if (!iconUrl) {
             return null;
         }
@@ -933,7 +978,7 @@ export class AzureDevOpsAPI {
             } else {
                 return null;
             }
-        } catch (error) {
+        } catch {
             return null;
         }
     }
