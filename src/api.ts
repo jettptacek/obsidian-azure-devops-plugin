@@ -1,5 +1,5 @@
 import { Notice, requestUrl } from 'obsidian';
-import { AzureDevOpsSettings, WorkItem } from './settings';
+import { AzureDevOpsSettings} from './settings';
 
 interface WorkItemRelation {
     rel: string;

@@ -1,4 +1,4 @@
-import { App, Notice, TFile, Modal, requestUrl, MetadataCache } from 'obsidian';
+import { App, Notice, TFile, Modal, requestUrl } from 'obsidian';
 import { AzureDevOpsAPI } from './api';
 import { AzureDevOpsSettings } from './settings';
 
@@ -208,7 +208,6 @@ export class AzureDevOpsLinkValidator {
 
                     if (extractedTitle) {
                         actualTitles.set(workItemId, extractedTitle);
-                        foundFromNotes++;
                     } else {
                         console.error(`Could not extract title for work item ${workItemId} from ${workItemFile.name}`);
                     }
@@ -623,7 +622,7 @@ class LinkValidationModal extends Modal {
             workItemStrong.textContent = result.workItemId.toString();
 
             // URL info
-            const urlInfo = contentContainer.createEl('div', {
+            contentContainer.createEl('div', {
                 text: result.azureDevOpsUrl,
                 cls: 'azure-devops-url-info'
             });
@@ -636,7 +635,7 @@ class LinkValidationModal extends Modal {
             const currentDiv = titleComparison.createEl('div', {
                 cls: 'azure-devops-current-title'
             });
-            const currentSpan = currentDiv.createEl('span', {
+            currentDiv.createEl('span', {
                 text: '❌ Current link text:',
                 cls: 'azure-devops-error-text'
             });
@@ -645,7 +644,7 @@ class LinkValidationModal extends Modal {
             const correctDiv = titleComparison.createEl('div', {
                 cls: 'azure-devops-correct-title'
             });
-            const correctSpan = correctDiv.createEl('span', {
+            correctDiv.createEl('span', {
                 text: '✅ Correct title:',
                 cls: 'azure-devops-success-text'
             });
@@ -668,14 +667,14 @@ class LinkValidationModal extends Modal {
                 const filesToShow = result.affectedFiles.slice(0, 2);
                 for (const filePath of filesToShow) {
                     const fileName = filePath.split('/').pop() || filePath;
-                    const listItem = filesList.createEl('li', {
+                    filesList.createEl('li', {
                         text: fileName,
                         cls: 'azure-devops-file-item'
                     });
                 }
 
                 if (result.affectedFiles.length > 2) {
-                    const moreItem = filesList.createEl('li', {
+                    filesList.createEl('li', {
                         text: `... and ${result.affectedFiles.length - 2} more`,
                         cls: 'azure-devops-file-item azure-devops-file-item--more'
                     });

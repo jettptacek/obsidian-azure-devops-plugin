@@ -1,5 +1,5 @@
 import { WorkspaceLeaf, ItemView, Menu, TFile, Notice, FileView } from 'obsidian';
-import { WorkItemNode, WorkItemRelation, HTMLElementWithWorkItem, AzureDevOpsWorkItem } from './settings';
+import { WorkItemNode, WorkItemRelation, HTMLElementWithWorkItem } from './settings';
 
 export const VIEW_TYPE_AZURE_DEVOPS_TREE = 'azure-devops-tree-view';
 
@@ -651,7 +651,7 @@ export class AzureDevOpsTreeView extends ItemView {
         clearButton.title = 'Clear search';
         
         // Search results count
-        const resultsCount = searchRow.createEl('span', { cls: 'azure-tree-search-results-count' });
+        searchRow.createEl('span', { cls: 'azure-tree-search-results-count' });
         
         // Search event handlers
         this.searchInput.addEventListener('input', (e) => {

@@ -312,10 +312,7 @@ export class WorkItemManager {
                 }
                 if (typeof treeView.updatePushButtonIfExists === 'function') {
                     treeView.updatePushButtonIfExists();
-                }
-                
-                const remainingChanges = (treeView.changedNotes?.size || 0) + (treeView.changedRelationships?.size || 0);
-                //console.log(`✅ Established baselines for ${workItems.length} pulled work items. ${remainingChanges} items still have pending changes.`);
+                }    
             }
             
         } catch (error) {
