@@ -39,7 +39,7 @@ export class WorkItemModal extends Modal {
         // Show loading message while fetching work item types
         const loadingEl = contentEl.createEl('p', { 
             text: '🔄 Loading work item types from Azure DevOps...',
-            cls: 'loading-message'
+            cls: 'azure-loading-message'
         });
 
         try {
@@ -54,7 +54,7 @@ export class WorkItemModal extends Modal {
             // Show error and fall back to default types
             const errorEl = contentEl.createEl('p', {
                 text: '⚠️ Could not load work item types from Azure DevOps. Using default types.',
-                cls: 'error-message'
+                cls: 'azure-error-message'
             });
             errorEl.classList.add('azure-modal-error-message');
             
@@ -215,7 +215,7 @@ export class WorkItemModal extends Modal {
     private updateTypeDescription(typeName: string) {
         const { contentEl } = this;
         
-        const existingDesc = contentEl.querySelector('.type-description');
+        const existingDesc = contentEl.querySelector('.azure-type-description');
         if (existingDesc) {
             existingDesc.remove();
         }
@@ -226,7 +226,7 @@ export class WorkItemModal extends Modal {
             const typeSettingEl = contentEl.querySelector('.setting-item:nth-child(3)'); // Type is the 2nd setting
             if (typeSettingEl) {
                 const descEl = document.createElement('div');
-                descEl.className = 'type-description';
+                descEl.className = 'azure-type-description';
                 descEl.classList.add('azure-modal-type-description');
                 descEl.textContent = `💡 ${selectedType.description}`;
                 
