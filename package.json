@@ -1,6 +1,6 @@
 {
 	"name": "azure-devops-backlog",
-	"version": "1.1.5",
+	"version": "1.1.6",
 	"description": "This is a plugin for Obsidian to manage backlog work items",
 	"main": "main.js",
 	"type": "module",
